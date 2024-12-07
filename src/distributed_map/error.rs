@@ -1,7 +1,11 @@
+use std::error::Error;
 use thiserror::Error;
+use crate::distributed_map::error::KeyError::InvalidKey;
+use ed25519_dalek::SignatureError;
 
 #[derive(Error, Debug)]
 pub enum CreateError {
+    #[error("Invalid Id encoding: {0}")]
     MainlineDhtError(#[from] mainline::Error)
 }
 
@@ -13,8 +17,12 @@ pub enum CreateError {
 
 #[derive(Error, Debug)]
 pub enum GetError {
+    #[error("Invalid Id encoding: {0}")]
     MainlineDhtError(#[from] mainline::Error),
-    InvalidKey(#[from] KeyError)
+    #[error("Invalid Id encoding: {0}")]
+    InvalidKey(#[from] KeyError),
+    #[error("An unexpected value was received from dht")]
+    InternalError
 }
 
 // impl From<mainline::Error> for GetError {
@@ -25,12 +33,28 @@ pub enum GetError {
 
 #[derive(Error, Debug)]
 pub enum KeyError {
+    #[error("Invalid Id encoding: {0}")]
+    HashingErr(#[from] std::io::Error),
+    #[error("Invalid Id encoding: {0}")]
+    InvalidKey(#[from] SignatureError)
 }
 
 #[derive(Error, Debug)]
 pub enum PutError {
-    InvalidKey(#[from] KeyError)
+    #[error("Invalid Id encoding: {0}")]
+    InvalidKey(#[from] KeyError),
+    #[error("Invalid ")]
+    InvalidValue,
+    #[error("Invalid ")]
+    XZError,
+    #[error("Invalid ")]
+    AlreadyExist,
+    #[error("Inval")]
+    UnexpectedDhtState(#[from] serde_json::Error),
+    #[error("Inval")]
+    InternalError(#[from] GetError)
 }
+
 
 // impl From<KeyError> for PutError {
 //     fn from(value: KeyError) -> Self {

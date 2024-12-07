@@ -1,4 +1,6 @@
 mod distributed_map;
+mod retry_police;
+mod heartbeat;
 
 use libtorrent_sys::ffi::*;
 
@@ -12,15 +14,74 @@ use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 use std::thread::sleep;
 use std::time::SystemTime;
+use actix_web::{App, HttpServer};
 use mainline::{Dht, Id};
 use mainline::dht::DhtSettings;
 use mainline::server::DhtServer;
+use crate::distributed_map::DistributedMap;
 
 
-fn main() {
 
-    let text = "4238af8aff56cf6e0007d9d2003bf23d33eea7c3";
+#[tokio::main]
+async fn main() {
+    tokio::spawn(heartbeat::init());
 
+
+    // server().await;
+    client().await;
+}
+
+
+
+// #[actix_web::main]
+// async fn main() -> std::io::Result<()> {
+//     HttpServer::new(|| {
+//         App::new().service(greet)
+    // })
+    //     .bind(("127.0.0.1", 8080))?
+    //     .run()
+    //     .await
+// }
+
+async fn server() {
+    // let map = DistributedMap::new(8082, &vec!["127.0.0.1:8081".to_string(), "127.0.0.1:8080".to_string()]).unwrap();
+    let map = DistributedMap::new(8080, &vec!["127.0.0.1:8081".to_string(), "127.0.0.1:8082".to_string()]).unwrap();
+
+    sleep(Duration::from_secs(10 * 60));
+
+
+    // map.put().unwrap()
+}
+
+async fn client() {
+
+    let map = DistributedMap::new(8081, &vec!["127.0.0.1:8082".to_string(), "127.0.0.1:8081".to_string()]).unwrap();
+    let r = map.get("/home/test123").await.unwrap();
+    dbg!(r);
+
+    map.put("/home/test123", "value123").await.unwrap();
+
+    let r = map.get("/home/test123").await.unwrap();
+    dbg!(r);
+
+    // tokio::time::sleep(Duration::from_secs(10)).await;
+    // let r = map.get("/home/test123").await.unwrap();
+    // dbg!(r);
+
+    map.put("/home/test123", "new_value").await.unwrap();
+
+    let r = map.get("/home/test123").await.unwrap();
+    dbg!(r);
+
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    let r = map.get("/home/test123").await.unwrap();
+    dbg!(r);
+
+
+
+    // let text = "4238af8aff56cf6e0007d9d2003bf23d33eea7c3";
+
+    /*
 
     let thread = thread::spawn(|| {
         let dht = Dht::new(DhtSettings {
@@ -48,6 +109,9 @@ fn main() {
         // println!("{:?}", res);
     });
 
+     */
+
+    /*
     let s1 = thread::spawn(|| {
         let mut dht = Dht::new(DhtSettings {
             bootstrap: Some(vec!["127.0.0.1:8081".to_string()]),
@@ -93,6 +157,8 @@ fn main() {
         // dht.
     });
 
+     */
+
 
     // let start = SystemTime::now();;
     // for _ in 0..1500 {
@@ -101,12 +167,12 @@ fn main() {
     //     println!("{:?}", (start.elapsed().unwrap()));
     // }
     // println!("{:?}", res);
-    sleep(Duration::from_secs(10));
-    println!("join");
+    // sleep(Duration::from_secs(10));
+    // println!("join");
     // dht.shutdown();
-    thread.join().unwrap();
-    s1.join();
-    s2.join();
+    // thread.join().unwrap();
+    // s1.join();
+    // s2.join();
 
     /*
 

@@ -2,24 +2,44 @@ mod error;
 
 use std::any::Any;
 use std::io::Write;
+use std::time::Duration;
 use flume::{Receiver, Sender};
 use mainline::{Bytes, Dht, Id, MutableItem, SigningKey};
 use mainline::async_dht::AsyncDht;
 use tokio::io::AsyncReadExt;
 use typed_builder::TypedBuilder;
 use crate::distributed_map::error::{CreateError, GetError, KeyError, PutError};
-use futures::{Stream, StreamExt};
+use futures::{FutureExt, Stream, StreamExt};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
-use sha2::digest::Update;
+use sha2::digest::{DynDigest, Update};
+use serde::{Deserialize, Serialize};
+use tryhard::retry_fn;
+use crate::retry_police::FixedBackoffWithJitter;
 
-struct DistributedMap {
-    dht: AsyncDht
+
+pub struct DistributedMap {
+    dht: AsyncDht,
+}
+
+#[derive(Serialize, Deserialize)]
+struct DhtRecord {
+    pairs: Vec<DistributedMapVal>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct DistributedMapVal {
+    key: String,
+    value: String,
 }
 
 impl DistributedMap {
-
-    fn new() -> Result<DistributedMap, CreateError> {
-        let dht = Dht::builder().server().build()?;
+    pub fn new(port: i32, other: &[String]) -> Result<DistributedMap, CreateError> {
+        let dht = Dht::builder()
+            .server()
+            .bootstrap(other)
+            .port(port as u16)
+            .build()?;
         let map = DistributedMap {
             dht: dht.as_async()
         };
@@ -28,20 +48,89 @@ impl DistributedMap {
     }
 
 
-    async fn put(&self, key: &str, value: &str) -> Result<(), PutError> {
-        // Dht::server().unwrap().
-        // dbg!()
+    async fn put_in_dht(&self, key: &str, record: &DhtRecord, seq: i64, cas: Option<i64>) -> Result<(), PutError> {
+        let signing_key = generate_key(key)?;
 
-        let key = self.generate_key(key)?;
-        let item = MutableItem::new(key, Bytes::from(value.to_string()), 0, None);
-        let res = self.dht.put_mutable(item).await;
-        dbg!("id", res.unwrap().bytes);
+        if let Ok(json) = serde_json::to_string(record) {
+            let mut item = MutableItem::new(signing_key, Bytes::from(json), seq, None);
+            if let Some(v) = cas {
+                item = item.with_cas(v);
+            }
 
-
-        return Ok(())
+            let res = self.dht.put_mutable(item).await;
+            if res.is_ok() {
+                return Ok(());
+            } else {
+                dbg!(res.err());
+                return Err(PutError::XZError);
+            }
+        } else {
+            return Err(PutError::InvalidValue);
+        }
     }
 
-    async fn get(&self, key: &str) -> Result<Option<String>, GetError> {
+    pub async fn put(&self, key: &str, value: &str) -> Result<(), PutError> {
+        retry_fn(|| self.put_impl(key, value))
+            .retries(3)
+            .custom_backoff(FixedBackoffWithJitter::new(Duration::from_secs(2), 50))
+            .await
+    }
+
+    pub async fn put_impl(&self, key: &str, value: &str) -> Result<(), PutError> {
+        let dht_item = self.get_mainline_dht_item(key).await?;
+        if let Some(record) = dht_item {
+            let mut dht_record = DhtRecord::try_from(record.clone())?;
+
+            let exist = dht_record.pairs.iter_mut().find(|v| v.key == key);
+            if let Some(prev_v) = exist {
+                prev_v.value = value.to_string();
+
+                self.put_in_dht(key, &dht_record, record.seq() + 1, Some(*record.seq())).await?;
+
+            } else {
+                dht_record.pairs.push(DistributedMapVal {
+                    key: key.to_string(),
+                    value: value.to_string(),
+                });
+
+                self.put_in_dht(key, &dht_record, record.seq() + 1, Some(*record.seq())).await?;
+            }
+        } else {
+            let record = DhtRecord {
+                pairs: vec![DistributedMapVal { key: key.to_string(), value: value.to_string() }]
+            };
+
+            self.put_in_dht(key, &record, 0, None).await?;
+        }
+
+        return Ok(());
+    }
+
+    async fn get_non_filtered_mainline_dht_items(&self, key: &str) -> Result<Vec<MutableItem>, GetError> {
+        let signing_key = generate_key(key)?;
+
+        let mut item_stream = self.dht.get_mutable(signing_key.verifying_key().as_bytes(), None, None)?;
+
+        let mut versions: Vec<MutableItem> = Vec::new();
+        while let Some(record) = item_stream.next().await {
+            versions.push(record);
+        }
+        return Ok(versions);
+    }
+    async fn get_mainline_dht_item(&self, key: &str) -> Result<Option<MutableItem>, GetError> {
+        let mut res = filter_mainline_items(self.get_non_filtered_mainline_dht_items(key).await?);
+        if res.len() == 0 {
+            return Ok(None);
+        }
+        let first_v = res.get(0).map(|v| v.value()).unwrap();
+
+        if !res.iter().all(|v| v.value() == first_v) {
+            return Err(GetError::InternalError)
+        }
+        return Ok(Some(res.swap_remove(0)));
+    }
+
+    pub async fn get(&self, key: &str) -> Result<Vec<String>, GetError> {
 
         // let (tx, rx): (Sender<i32>, Receiver<i32>) = flume::unbounded();
         // let (tx1, rx1) = flume::unbounded();
@@ -52,29 +141,67 @@ impl DistributedMap {
         // let mut c = rx1.into_stream();
         // let mut a: RecvStream<MutableItem> = self.dht.get_mutable(&[0u8; 32], None, None)?;
 
+        let dht_items = self.get_mainline_dht_item(key)
+            .await?;
 
+        let record: Option<Result<DhtRecord, serde_json::Error>> = dht_items
+            .map(|v| v.try_into());
 
-        let path = "/home/tardimgg/file.txt";
+        let mut versions = Vec::new();
+        if let Some(pairs_result) = record {
+            if let Ok(pairs) = pairs_result {
+                for pair in pairs.pairs {
+                    if pair.key == key {
+                        versions.push(pair.value)
+                    }
+                }
+            } else {
+                return Err(GetError::InternalError);
+            }
+        }
+        // }).finalize().collect::<RecvStream<Value>>();
 
-        let key = self.generate_key(path)?;
+        // let t = a.next();
 
-        let mut a = self.dht.get_mutable(key.verifying_key().as_bytes(), None, None)?;
-
-        let t = a.next();
-        let t1 = a.map(|v| dbg!(v));
+        // let t1 = a.map(|v| dbg!(v));
         // c.read_i64();
         // a.read_i32();
 
 
-        return Ok(None);
+        // return Ok(t.await.map(|v| String::from_utf8(v.value().to_vec()).unwrap()));
+        return Ok(versions);
     }
 
-    fn generate_key(&self, key: &str) -> Result<SigningKey, KeyError> {
-        let mut hasher = Sha256::new();
-        hasher.write(key.as_bytes())?;
 
-        let private_key = hasher.finalize();
-        Ok(SigningKey::try_from(private_key.as_slice())?)
+
+}
+
+fn filter_mainline_items(items: Vec<MutableItem>) -> Vec<MutableItem> {
+    if items.len() == 0 {
+        return vec![];
+    }
+    let max_seq = *items.iter().map(|v| v.seq()).max().unwrap();
+
+    items
+        .into_iter()
+        .filter(|v| *v.seq() == max_seq)
+        .collect()
+}
+
+fn generate_key(key: &str) -> Result<SigningKey, KeyError> {
+    let mut hasher = Sha256::new();
+    hasher.write(key.as_bytes())?;
+
+    let private_key = hasher.finalize();
+
+    Ok(SigningKey::try_from(private_key.as_slice())?)
+}
+
+impl TryFrom<MutableItem> for DhtRecord {
+    type Error = serde_json::Error;
+
+    fn try_from(value: MutableItem) -> Result<Self, Self::Error> {
+        serde_json::from_slice::<DhtRecord>(value.value())
     }
 }
 

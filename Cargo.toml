@@ -11,8 +11,14 @@ libtorrent-sys = "1.0.0"
 mainline = {path = "../mainline", features = ["async"]}
 typed-builder = "0.20.0"
 tokio = { version = "1.41.0", features = ["full"]}
-flume = "=0.11.0"
+flume = { version = "=0.11.0" , features = ["async"]}
 futures = "0.3.29"
 sha2 = "0.10.8"
 thiserror = "2.0.3"
-
+ed25519-dalek = "2.1.1"
+serde_json = "=1.0.133"
+serde = { version = "1.0.210", features = ["derive"] }
+tryhard = "0.5.1"
+rand = "0.8.5"
+actix-web = { version = "4.9.0"}
+#actix-multipart = "0.7.2"
