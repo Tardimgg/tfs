@@ -1,24 +1,24 @@
-mod error;
-
 use std::any::Any;
 use std::io::Write;
 use std::time::Duration;
+use async_trait::async_trait;
 use flume::{Receiver, Sender};
 use mainline::{Bytes, Dht, Id, MutableItem, SigningKey};
 use mainline::async_dht::AsyncDht;
 use tokio::io::AsyncReadExt;
 use typed_builder::TypedBuilder;
-use crate::distributed_map::error::{CreateError, GetError, KeyError, PutError};
+use crate::services::distributed_map::error::{CreateError, GetError, KeyError, PutError};
 use futures::{FutureExt, Stream, StreamExt};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use sha2::digest::{DynDigest, Update};
 use serde::{Deserialize, Serialize};
 use tryhard::retry_fn;
-use crate::retry_police::FixedBackoffWithJitter;
+use crate::common::retry_police::FixedBackoffWithJitter;
+use crate::services::distributed_map::DistributedMap;
 
 
-pub struct DistributedMap {
+pub struct DHTMap {
     dht: AsyncDht,
 }
 
@@ -33,20 +33,19 @@ struct DistributedMapVal {
     value: String,
 }
 
-impl DistributedMap {
-    pub fn new(port: i32, other: &[String]) -> Result<DistributedMap, CreateError> {
+impl DHTMap {
+    pub fn new(port: i32, other: &[String]) -> Result<DHTMap, CreateError> {
         let dht = Dht::builder()
             .server()
             .bootstrap(other)
             .port(port as u16)
             .build()?;
-        let map = DistributedMap {
+        let map = DHTMap {
             dht: dht.as_async()
         };
 
         return Ok(map);
     }
-
 
     async fn put_in_dht(&self, key: &str, record: &DhtRecord, seq: i64, cas: Option<i64>) -> Result<(), PutError> {
         let signing_key = generate_key(key)?;
@@ -67,13 +66,6 @@ impl DistributedMap {
         } else {
             return Err(PutError::InvalidValue);
         }
-    }
-
-    pub async fn put(&self, key: &str, value: &str) -> Result<(), PutError> {
-        retry_fn(|| self.put_impl(key, value))
-            .retries(3)
-            .custom_backoff(FixedBackoffWithJitter::new(Duration::from_secs(2), 50))
-            .await
     }
 
     pub async fn put_impl(&self, key: &str, value: &str) -> Result<(), PutError> {
@@ -129,8 +121,18 @@ impl DistributedMap {
         }
         return Ok(Some(res.swap_remove(0)));
     }
+}
 
-    pub async fn get(&self, key: &str) -> Result<Vec<String>, GetError> {
+#[async_trait]
+impl DistributedMap for DHTMap {
+    async fn put(&self, key: &str, value: &str) -> Result<(), PutError> {
+        retry_fn(|| self.put_impl(key, value))
+            .retries(3)
+            .custom_backoff(FixedBackoffWithJitter::new(Duration::from_secs(2), 50))
+            .await
+    }
+
+    async fn get(&self, key: &str) -> Result<Vec<String>, GetError> {
 
         // let (tx, rx): (Sender<i32>, Receiver<i32>) = flume::unbounded();
         // let (tx1, rx1) = flume::unbounded();
@@ -171,9 +173,6 @@ impl DistributedMap {
         // return Ok(t.await.map(|v| String::from_utf8(v.value().to_vec()).unwrap()));
         return Ok(versions);
     }
-
-
-
 }
 
 fn filter_mainline_items(items: Vec<MutableItem>) -> Vec<MutableItem> {

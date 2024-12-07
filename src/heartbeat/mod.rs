@@ -1,7 +1,6 @@
 use std::time::Duration;
-use crate::distributed_map::DistributedMap;
 
-static dht: DistributedMap = 0;
+// static dht: DistributedMap = 0;
 
 pub async fn init() {
     init_db().await;

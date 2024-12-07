@@ -1,36 +1,106 @@
-mod distributed_map;
-mod retry_police;
+
 mod heartbeat;
+mod controllers;
+mod services;
+mod common;
 
 use libtorrent_sys::ffi::*;
 
 use std::io::{self, Write};
 use std::{thread, time::Duration};
 use std::any::Any;
+use std::cell::RefCell;
+use std::error::Error;
 use std::fmt::Display;
 use std::fs::File;
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
+use std::rc::Rc;
 use std::str::FromStr;
 use std::thread::sleep;
 use std::time::SystemTime;
 use actix_web::{App, HttpServer};
+use actix_web::web::Data;
+use async_trait::async_trait;
 use mainline::{Dht, Id};
 use mainline::dht::DhtSettings;
 use mainline::server::DhtServer;
-use crate::distributed_map::DistributedMap;
+use crate::services::dht_map::DHTMap;
+use crate::services::distributed_map::DistributedMap;
+use crate::services::distributed_map::error::{GetError, PutError};
+use crate::services::file_storage::local_storage::LocalStorage;
+use crate::services::virtual_fs::VirtualFS;
 
+struct Mock {
 
+}
+
+#[async_trait]
+impl DistributedMap for Mock {
+    async fn put(&self, key: &str, value: &str) -> Result<(), PutError> {
+        todo!()
+    }
+
+    async fn get(&self, key: &str) -> Result<Vec<String>, GetError> {
+        todo!()
+    }
+}
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), AppError> {
     tokio::spawn(heartbeat::init());
+
+    let virtual_fs = VirtualFS::builder()
+        .map(Box::new(Mock {}))
+        .storage(Box::new(LocalStorage {}))
+        .build();
+
+    // let data = Data::new(Rc::new(virtual_fs));
+    let data = Data::new(virtual_fs);
+
+    /*
+    let app = App::new()
+        // Store `MyData` in application storage.
+        .app_data(Data::clone(&data))
+        .service(controllers::virtual_fs_controller::config());
+        // .route("/index.html", web::get().to(index))
+        // .route("/index-alt.html", web::get().to(index_alt));
+
+     //
+     */
+    HttpServer::new(move || {
+        App::new()
+            .app_data(Data::clone(&data))
+            .service(controllers::virtual_fs_controller::config())
+    }).bind(("0.0.0.0", 8080))?
+        .run()
+        .await.unwrap();
+
+    return Ok(())
 
 
     // server().await;
-    client().await;
+    // client().await;
 }
 
+#[derive(Debug)]
+struct AppError {
+    err: String
+}
+
+impl From<String> for AppError {
+    fn from(value: String) -> Self {
+        AppError {
+            err: value
+        }
+    }
+}
+
+impl From<io::Error> for AppError {
+    fn from(value: io::Error) -> Self {
+        value.to_string().into()
+    }
+}
 
 
 // #[actix_web::main]
@@ -45,7 +115,7 @@ async fn main() {
 
 async fn server() {
     // let map = DistributedMap::new(8082, &vec!["127.0.0.1:8081".to_string(), "127.0.0.1:8080".to_string()]).unwrap();
-    let map = DistributedMap::new(8080, &vec!["127.0.0.1:8081".to_string(), "127.0.0.1:8082".to_string()]).unwrap();
+    let map = DHTMap::new(8080, &vec!["127.0.0.1:8081".to_string(), "127.0.0.1:8082".to_string()]).unwrap();
 
     sleep(Duration::from_secs(10 * 60));
 
@@ -55,7 +125,7 @@ async fn server() {
 
 async fn client() {
 
-    let map = DistributedMap::new(8081, &vec!["127.0.0.1:8082".to_string(), "127.0.0.1:8081".to_string()]).unwrap();
+    let map = DHTMap::new(8081, &vec!["127.0.0.1:8082".to_string(), "127.0.0.1:8081".to_string()]).unwrap();
     let r = map.get("/home/test123").await.unwrap();
     dbg!(r);
 

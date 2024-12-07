@@ -1,6 +1,5 @@
 use std::error::Error;
 use thiserror::Error;
-use crate::distributed_map::error::KeyError::InvalidKey;
 use ed25519_dalek::SignatureError;
 
 #[derive(Error, Debug)]

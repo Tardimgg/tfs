@@ -21,4 +21,6 @@ serde = { version = "1.0.210", features = ["derive"] }
 tryhard = "0.5.1"
 rand = "0.8.5"
 actix-web = { version = "4.9.0"}
-#actix-multipart = "0.7.2"
+actix-multipart = "0.7.2"
+actix = "0.13.5"
+async-trait = "0.1.83"
