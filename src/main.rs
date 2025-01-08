@@ -10,49 +10,43 @@ use std::io::{self, Write};
 use std::{thread, time::Duration};
 use std::any::Any;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::Display;
 use std::fs::File;
+use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use std::str::FromStr;
 use std::thread::sleep;
 use std::time::SystemTime;
-use actix_web::{App, HttpServer};
+use actix::fut::try_future::MapErr;
+use actix_web::{App, HttpServer, web};
 use actix_web::web::Data;
 use async_trait::async_trait;
-use mainline::{Dht, Id};
-use mainline::dht::DhtSettings;
-use mainline::server::DhtServer;
-use crate::services::dht_map::DHTMap;
-use crate::services::distributed_map::DistributedMap;
-use crate::services::distributed_map::error::{GetError, PutError};
+use crate::services::dht_map::dht_map::DHTMap;
 use crate::services::file_storage::local_storage::LocalStorage;
 use crate::services::virtual_fs::VirtualFS;
 
-struct Mock {
 
-}
-
-#[async_trait]
-impl DistributedMap for Mock {
-    async fn put(&self, key: &str, value: &str) -> Result<(), PutError> {
-        todo!()
-    }
-
-    async fn get(&self, key: &str) -> Result<Vec<String>, GetError> {
-        todo!()
-    }
-}
-
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), AppError> {
+    // let page = DhtPage::from("string".to_string());
+    // let data: TfsData = TfsData::from(ListOfIP::from(page));
+    //
+    //
+    // vfs.getData(vfs.getPag(dht.getIps("string".to_string())))
+    //
+    // vfs.getData(vfs.getPag2(dht2.getIps("string".to_string())))
+
+    let dht = DHTMap::new(8080, &[]).unwrap();
+
     tokio::spawn(heartbeat::init());
 
     let virtual_fs = VirtualFS::builder()
-        .map(Box::new(Mock {}))
-        .storage(Box::new(LocalStorage {}))
+        .map(Box::new(dht))
+        .storage(Box::new(LocalStorage{ base_path: "root".to_string() }))
         .build();
 
     // let data = Data::new(Rc::new(virtual_fs));
@@ -71,6 +65,7 @@ async fn main() -> Result<(), AppError> {
     HttpServer::new(move || {
         App::new()
             .app_data(Data::clone(&data))
+            // .app_data(web::PayloadConfig::new(1 * 1024 * 1024 * 1024))
             .service(controllers::virtual_fs_controller::config())
     }).bind(("0.0.0.0", 8080))?
         .run()
@@ -124,7 +119,7 @@ async fn server() {
 }
 
 async fn client() {
-
+/*
     let map = DHTMap::new(8081, &vec!["127.0.0.1:8082".to_string(), "127.0.0.1:8081".to_string()]).unwrap();
     let r = map.get("/home/test123").await.unwrap();
     dbg!(r);
@@ -148,6 +143,8 @@ async fn client() {
     dbg!(r);
 
 
+
+ */
 
     // let text = "4238af8aff56cf6e0007d9d2003bf23d33eea7c3";
 

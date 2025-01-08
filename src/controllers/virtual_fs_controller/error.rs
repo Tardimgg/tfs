@@ -1,18 +1,63 @@
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use actix_web::ResponseError;
+use thiserror::Error;
+use crate::controllers::virtual_fs_controller::error::ApiException::{FileAlreadyExist, FileNotFound, FolderAlreadyExist, FolderNotFound, InternalError};
+use crate::services::dht_map::error::KeyError;
+use crate::services::file_storage::errors::*;
 
 #[derive(Debug)]
-pub struct ApiException {
-    message: String
+pub enum ApiException {
+    FileNotFound,
+    FolderNotFound,
+    FileAlreadyExist,
+    FolderAlreadyExist,
+    InternalError(String)
 }
+
+// #[derive(Error, Debug)]
+// pub enum ApiException {
+//     #[error(": {0}")]
+//     FileNotExist(#[from] FileReadingError::NotExist),
+//     #[error("Invalid Id encoding: {0}")]
+//     InvalidKey(#[from] KeyError),
+//     #[error("An unexpected value was received from dht")]
+//     InternalError
+// }
 
 
 impl Display for ApiException {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
+        Debug::fmt(self, f)
     }
 }
 
 impl ResponseError for ApiException {
 
+}
+
+impl From<FolderReadingError> for ApiException {
+    fn from(value: FolderReadingError) -> Self {
+        match value {
+            FolderReadingError::NotExist => FolderNotFound,
+            FolderReadingError::InternalError(err) => InternalError(err)
+        }
+    }
+}
+
+impl From<FileReadingError> for ApiException {
+    fn from(value: FileReadingError) -> Self {
+        match value { FileReadingError::NotExist => FileNotFound }
+    }
+}
+
+impl From<CreateFolderError> for ApiException {
+    fn from(value: CreateFolderError) -> Self {
+        match value { CreateFolderError::AlreadyExist => FolderAlreadyExist }
+    }
+}
+
+impl From<FileSavingError> for ApiException {
+    fn from(value: FileSavingError) -> Self {
+        match value { FileSavingError::AlreadyExist => FileAlreadyExist }
+    }
 }

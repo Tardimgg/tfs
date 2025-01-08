@@ -1,5 +1,3 @@
 pub mod local_storage;
-
-pub trait FileStorage {
-
-}
+pub mod file_storage;
+pub mod errors;

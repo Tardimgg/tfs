@@ -15,7 +15,7 @@ pub enum CreateError {
 // }
 
 #[derive(Error, Debug)]
-pub enum GetError {
+pub enum DhtGetError {
     #[error("Invalid Id encoding: {0}")]
     MainlineDhtError(#[from] mainline::Error),
     #[error("Invalid Id encoding: {0}")]
@@ -39,7 +39,7 @@ pub enum KeyError {
 }
 
 #[derive(Error, Debug)]
-pub enum PutError {
+pub enum DhtPutError {
     #[error("Invalid Id encoding: {0}")]
     InvalidKey(#[from] KeyError),
     #[error("Invalid ")]
@@ -51,7 +51,7 @@ pub enum PutError {
     #[error("Inval")]
     UnexpectedDhtState(#[from] serde_json::Error),
     #[error("Inval")]
-    InternalError(#[from] GetError)
+    InternalError(#[from] DhtGetError)
 }
 
 
