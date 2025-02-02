@@ -5,14 +5,13 @@ use std::task::{Context, Poll};
 use actix_web::{ResponseError, web};
 use async_stream::stream;
 use async_trait::async_trait;
-use bytes::Bytes;
 use futures::{Stream, StreamExt, TryStreamExt};
 use futures::FutureExt;
 use tokio::fs::File;
 use tokio::io::BufReader;
 use tokio_util::io::ReaderStream;
 use crate::services::file_storage::errors::*;
-use crate::services::virtual_fs::models::FolderMeta;
+use crate::services::file_storage::model::{ChunkVersion, FileRange, FolderMeta};
 
 pub enum FileStream {
     Payload(web::Payload),
@@ -42,10 +41,13 @@ impl FileStream {
 
 #[async_trait(?Send)]
 pub trait FileStorage {
-
-    async fn save(&self, path: &str, data: FileStream) -> Result<(), FileSavingError>;
-    async fn get_file(&self, path: &str) -> Result<FileStream, FileReadingError>;
+// нужно как то построить заборы над путями, может же придти совсем рандомный путь куда угодно
+    async fn save(&self, path: &str, range: FileRange, version: ChunkVersion, data: FileStream) -> Result<(), FileSavingError>;
+    // нужно научится хранить id версии хранимого куска
+    async fn get_file<'a>(&self, path: &str, ranges: Option<&'a [FileRange]>, max_version: Option<ChunkVersion>) -> Result<Vec<(FileRange, FileStream)>, FileReadingError>;
+    async fn move_file(&self, from: &str, to: &str) -> Result<(), String>;
     async fn get_folder_content(&self, path: &str) -> Result<FolderMeta, FolderReadingError>;
     async fn create_folder(&self, path: &str) -> Result<(), CreateFolderError>;
+    async fn move_folder(&self, from: &str, to: &str) -> Result<(), String>;
 }
 

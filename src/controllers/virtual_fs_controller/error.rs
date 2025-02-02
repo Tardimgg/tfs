@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Display, Formatter};
 use actix_web::ResponseError;
 use thiserror::Error;
-use crate::controllers::virtual_fs_controller::error::ApiException::{FileAlreadyExist, FileNotFound, FolderAlreadyExist, FolderNotFound, InternalError};
+use crate::controllers::virtual_fs_controller::error::ApiException::{BadRequest, FileAlreadyExist, FileNotFound, FolderAlreadyExist, FolderNotFound, InternalError};
 use crate::services::dht_map::error::KeyError;
 use crate::services::file_storage::errors::*;
 
@@ -11,6 +11,7 @@ pub enum ApiException {
     FolderNotFound,
     FileAlreadyExist,
     FolderAlreadyExist,
+    BadRequest,
     InternalError(String)
 }
 
@@ -46,7 +47,11 @@ impl From<FolderReadingError> for ApiException {
 
 impl From<FileReadingError> for ApiException {
     fn from(value: FileReadingError) -> Self {
-        match value { FileReadingError::NotExist => FileNotFound }
+        match value {
+            FileReadingError::NotExist => FileNotFound,
+            FileReadingError::BadRequest => BadRequest,
+            FileReadingError::ChunkIsNotExist(_) => FileNotFound
+        }
     }
 }
 

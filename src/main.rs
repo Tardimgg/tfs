@@ -7,7 +7,7 @@ mod common;
 use libtorrent_sys::ffi::*;
 
 use std::io::{self, Write};
-use std::{thread, time::Duration};
+use std::{env, thread, time::Duration};
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -15,7 +15,7 @@ use std::error::Error;
 use std::fmt::Display;
 use std::fs::File;
 use std::marker::PhantomData;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use std::str::FromStr;
@@ -26,7 +26,8 @@ use actix_web::{App, HttpServer, web};
 use actix_web::web::Data;
 use async_trait::async_trait;
 use crate::services::dht_map::dht_map::DHTMap;
-use crate::services::file_storage::local_storage::LocalStorage;
+use crate::services::dht_map::model::DhtNodeId;
+use crate::services::file_storage::local_storage::local_storage::LocalStorage;
 use crate::services::virtual_fs::VirtualFS;
 
 
@@ -39,13 +40,26 @@ async fn main() -> Result<(), AppError> {
     // vfs.getData(vfs.getPag(dht.getIps("string".to_string())))
     //
     // vfs.getData(vfs.getPag2(dht2.getIps("string".to_string())))
+    let args: Vec<String> = env::args().collect();
+    let port = args.get(1).map(|v| v.parse::<u16>().unwrap_or(8080)).unwrap_or(8080);
 
-    let dht = DHTMap::new(8080, &[]).unwrap();
+    let other_ports = args.iter().skip(2).map(|v| v.parse::<u16>().unwrap()).collect::<Vec<u16>>();
+    let other_ips = other_ports.into_iter().map(|v| format!("{}:{}", "127.0.0.1", v)).collect::<Vec<String>>();
+
+    println!("used port: {}", port);
+    println!("other_ips: {:?}", other_ips);
+    let dht = DHTMap::new(port, &other_ips.into_iter().map(|v| v.to_string()).collect::<Vec<String>>()).unwrap();
 
     tokio::spawn(heartbeat::init());
 
+    let dht_node_id = DhtNodeId::builder()
+        .ip(IpAddr::from([127, 0, 0, 1]))
+        .port(port)
+        .build();
+
     let virtual_fs = VirtualFS::builder()
-        .map(Box::new(dht))
+        .dht_map(Box::new(dht))
+        .id(dht_node_id)
         .storage(Box::new(LocalStorage{ base_path: "root".to_string() }))
         .build();
 
@@ -66,10 +80,11 @@ async fn main() -> Result<(), AppError> {
         App::new()
             .app_data(Data::clone(&data))
             // .app_data(web::PayloadConfig::new(1 * 1024 * 1024 * 1024))
-            .service(controllers::virtual_fs_controller::config())
-    }).bind(("0.0.0.0", 8080))?
+            .service(controllers::virtual_fs_controller::virtual_fs_controller::config())
+    }).bind(("0.0.0.0", port))?
         .run()
-        .await.unwrap();
+        .await
+        .unwrap();
 
     return Ok(())
 

@@ -16,28 +16,28 @@ use tryhard::retry_fn;
 use crate::common::retry_police::fixed_backoff_with_jitter::FixedBackoffWithJitter;
 use crate::services::dht_map::error::{CreateError, DhtGetError, KeyError, DhtPutError};
 
-
 pub struct DHTMap {
     dht: AsyncDht,
 }
 
 #[derive(Serialize, Deserialize)]
-struct DhtRecord {
-    pairs: Vec<DistributedMapVal>,
+pub struct DhtRecord {
+    pub pairs: Vec<DistributedMapVal>,
 }
 
 #[derive(Serialize, Deserialize)]
-struct DistributedMapVal {
+pub struct DistributedMapVal {
     key: String,
     value: String,
 }
 
+
 impl DHTMap {
-    pub fn new(port: i32, other: &[String]) -> Result<DHTMap, CreateError> {
+    pub fn new(port: u16, other: &[String]) -> Result<DHTMap, CreateError> {
         let dht = Dht::builder()
             .server()
             .bootstrap(other)
-            .port(port as u16)
+            .port(port)
             .build()?;
         let map = DHTMap {
             dht: dht.as_async()
@@ -67,7 +67,7 @@ impl DHTMap {
         }
     }
 
-    pub async fn put_impl(&self, key: &str, value: &str) -> Result<(), DhtPutError> {
+    async fn put_impl(&self, key: &str, value: &str) -> Result<(), DhtPutError> {
         let dht_item = self.get_mainline_dht_item(key).await?;
         if let Some(record) = dht_item {
             let mut dht_record = DhtRecord::try_from(record.clone())?;
