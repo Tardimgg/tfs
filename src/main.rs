@@ -3,6 +3,7 @@ mod heartbeat;
 mod controllers;
 mod services;
 mod common;
+mod config;
 
 use libtorrent_sys::ffi::*;
 
@@ -19,17 +20,20 @@ use std::net::{IpAddr, SocketAddr};
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::thread::sleep;
 use std::time::SystemTime;
 use actix::fut::try_future::MapErr;
 use actix_web::{App, HttpServer, web};
 use actix_web::web::Data;
 use async_trait::async_trait;
+use tokio::sync::mpsc;
+use crate::config::global_config::GlobalConfig;
+use crate::heartbeat::Heartbeat;
 use crate::services::dht_map::dht_map::DHTMap;
 use crate::services::dht_map::model::DhtNodeId;
 use crate::services::file_storage::local_storage::local_storage::LocalStorage;
 use crate::services::virtual_fs::VirtualFS;
-
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), AppError> {
@@ -50,35 +54,45 @@ async fn main() -> Result<(), AppError> {
     println!("other_ips: {:?}", other_ips);
     let dht = DHTMap::new(port, &other_ips.into_iter().map(|v| v.to_string()).collect::<Vec<String>>()).unwrap();
 
-    tokio::spawn(heartbeat::init());
+    let dht = Arc::new(dht);
+
 
     let dht_node_id = DhtNodeId::builder()
         .ip(IpAddr::from([127, 0, 0, 1]))
         .port(port)
         .build();
 
+    let config = Arc::new(GlobalConfig::new(dht.clone()));
+    let storage = Arc::new(LocalStorage{ base_path: "root".to_string() });
+
+    let (tx, rx) = mpsc::channel(32);
     let virtual_fs = VirtualFS::builder()
-        .dht_map(Box::new(dht))
+        .dht_map(dht.clone())
         .id(dht_node_id)
-        .storage(Box::new(LocalStorage{ base_path: "root".to_string() }))
+        .storage(storage.clone())
+        .config(config.clone())
+        .state_updater(tx)
         .build();
+    let virtual_fs = Arc::new(virtual_fs);
 
-    // let data = Data::new(Rc::new(virtual_fs));
-    let data = Data::new(virtual_fs);
+    let cloned_fs = virtual_fs.clone();
+    let cloned_config = config.clone();
+    let cloned_storage = storage.clone();
+    tokio::spawn(async move {
+        let heartbeat = Heartbeat::builder()
+            .fs(cloned_fs)
+            .config(cloned_config)
+            .storage(cloned_storage)
+            .build();
 
-    /*
-    let app = App::new()
-        // Store `MyData` in application storage.
-        .app_data(Data::clone(&data))
-        .service(controllers::virtual_fs_controller::config());
-        // .route("/index.html", web::get().to(index))
-        // .route("/index-alt.html", web::get().to(index_alt));
+        heartbeat.init(rx).await;
+    });
 
-     //
-     */
     HttpServer::new(move || {
         App::new()
-            .app_data(Data::clone(&data))
+            .app_data(dht.clone())
+            .app_data(config.clone())
+            .app_data(virtual_fs.clone())
             // .app_data(web::PayloadConfig::new(1 * 1024 * 1024 * 1024))
             .service(controllers::virtual_fs_controller::virtual_fs_controller::config())
     }).bind(("0.0.0.0", port))?
@@ -86,7 +100,8 @@ async fn main() -> Result<(), AppError> {
         .await
         .unwrap();
 
-    return Ok(())
+
+    Ok(())
 
 
     // server().await;

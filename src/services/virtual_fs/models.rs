@@ -14,8 +14,8 @@ pub struct FileKeeper {
 
 #[derive(Debug, Serialize, Deserialize, TypedBuilder)]
 pub struct GlobalFileInfo {
-    filename: String,
-    keepers: Vec<FileKeeper>
+    pub filename: String,
+    pub keepers: Vec<FileKeeper>
 }
 
 // перенести в папку file_storage

@@ -4,6 +4,6 @@ use typed_builder::TypedBuilder;
 
 #[derive(Debug, Serialize, Deserialize, TypedBuilder, Copy, Clone)]
 pub struct DhtNodeId {
-    ip: IpAddr,
-    port: u16
+    pub ip: IpAddr,
+    pub port: u16
 }

@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Display, Formatter};
 use actix_web::ResponseError;
 use thiserror::Error;
-use crate::controllers::virtual_fs_controller::error::ApiException::{BadRequest, FileAlreadyExist, FileNotFound, FolderAlreadyExist, FolderNotFound, InternalError};
+use crate::controllers::virtual_fs_controller::error::ApiException::{BadRequest, FileAlreadyExist, FileNotFound, FolderAlreadyExist, FolderNotFound, InternalError, UnknownNode};
 use crate::services::dht_map::error::KeyError;
 use crate::services::file_storage::errors::*;
 
@@ -12,7 +12,8 @@ pub enum ApiException {
     FileAlreadyExist,
     FolderAlreadyExist,
     BadRequest,
-    InternalError(String)
+    InternalError(String),
+    UnknownNode(String)
 }
 
 // #[derive(Error, Debug)]
@@ -50,7 +51,8 @@ impl From<FileReadingError> for ApiException {
         match value {
             FileReadingError::NotExist => FileNotFound,
             FileReadingError::BadRequest => BadRequest,
-            FileReadingError::ChunkIsNotExist(_) => FileNotFound
+            FileReadingError::ChunkIsNotExist(_) => FileNotFound,
+            FileReadingError::Retryable => InternalError("repeat later".to_string())
         }
     }
 }
@@ -64,5 +66,11 @@ impl From<CreateFolderError> for ApiException {
 impl From<FileSavingError> for ApiException {
     fn from(value: FileSavingError) -> Self {
         match value { FileSavingError::AlreadyExist => FileAlreadyExist }
+    }
+}
+
+impl From<NodeMetaReceivingError> for ApiException {
+    fn from(value: NodeMetaReceivingError) -> Self {
+        match value { NodeMetaReceivingError::NotFound => {UnknownNode("Not found".into())} }
     }
 }

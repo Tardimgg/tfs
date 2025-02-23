@@ -39,7 +39,8 @@ impl FileStream {
     }
 }
 
-#[async_trait(?Send)]
+// #[async_trait(?Send)]
+#[async_trait]
 pub trait FileStorage {
 // нужно как то построить заборы над путями, может же придти совсем рандомный путь куда угодно
     async fn save(&self, path: &str, range: FileRange, version: ChunkVersion, data: FileStream) -> Result<(), FileSavingError>;

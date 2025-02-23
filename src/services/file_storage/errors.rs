@@ -9,8 +9,16 @@ pub enum FileSavingError {
 pub enum FileReadingError {
     NotExist,
     BadRequest,
-    ChunkIsNotExist(Vec<FileRange>)
+    ChunkIsNotExist(Vec<FileRange>),
+    Retryable
 }
+
+#[derive(Debug)]
+pub enum NodeMetaReceivingError {
+    NotFound
+}
+
+
 
 pub enum FolderReadingError {
     NotExist,

@@ -38,7 +38,8 @@ impl LocalStorage {
     }
 }
 
-#[async_trait(?Send)]
+// #[async_trait(?Send)]
+#[async_trait]
 impl FileStorage for LocalStorage {
     async fn save(&self, path: &str, range: FileRange, version: ChunkVersion, mut data: FileStream) -> Result<(), FileSavingError> {
         let chunks_folder = self.filepath(path);
@@ -79,7 +80,7 @@ impl FileStorage for LocalStorage {
             vec![Event::StartRequest(0), Event::EndRequest(EndOfFileRange::LastByte)]
         };
 
-        // let mut exist_ranges = Vec::new();
+        // let mut exist_ranges = Vec::new(); // тут будут проблемы при одновременно удалении (хотя зачем нужно что удалять пока непонятно)
         let mut exist_files = tokio::fs::read_dir(&chunks_folder).await.unwrap();
         while let Ok(file_o) = exist_files.next_entry().await {
             if let Some(file) = file_o {
@@ -124,103 +125,15 @@ impl FileStorage for LocalStorage {
 
         // !!!!!!!!!!!!!!!!!!!! нужно убрать пересечения из запроса
 
-        // let mut exist = Vec::new();
-
-        let mut in_request = false;
-        let mut ranges: Vec<(ChunkFilename, (u64, EndOfFileRange))> = Vec::new();
-        let mut opened_exist = BTreeMap::new();
-        let mut already_closed = HashSet::new();
-        println!("{:?}", events);
-
-        for event in events {
-            match event {
-                Event::StartExist(from, version, id) => {
-                    let old_val_o = opened_exist.insert(version, id);
-                    if let Some(old_val) = old_val_o {
-                        already_closed.insert(version);
-                    }
-
-                    if in_request {
-                        let new_max_version = opened_exist.last_key_value().unwrap();
-                        if let Some(last_range) = ranges.last_mut() {
-                            if new_max_version.0 > last_range.0.get_version() {
-                                last_range.1.1 = EndOfFileRange::ByteIndex(from - 1);
-                                ranges.push((*new_max_version.1, (from, EndOfFileRange::ByteIndex(0))))
-                            }
-                        } else {
-                            panic!("internal logic error 2");
-                        }
-                    }
-                }
-                Event::EndExist(end_exist, version, chunk_filename) => {
-                    if let None = already_closed.get(&version) {
-                        opened_exist.remove(&version);
-                    } else {
-                        already_closed.remove(&version);
-                    }
-
-                    if in_request {
-                        if let Some(new_max_version) = opened_exist.last_key_value() {
-                            if let Some(last_request) = ranges.last_mut() {
-                                if last_request.0 == chunk_filename {
-                                    last_request.1.1 = end_exist;
-                                    if let EndOfFileRange::ByteIndex(prev_end) = end_exist {
-                                        if let EndOfFileRange::ByteIndex(new_end) = new_max_version.1.get_end() {
-                                            if *new_end < prev_end + 1 {
-                                                panic!("internal logic error 4");
-                                            }
-                                        } else {
-                                            panic!("internal logic error 3");
-                                        }
-                                        ranges.push((*new_max_version.1, (prev_end + 1, EndOfFileRange::ByteIndex(0))))
-                                    } else {
-                                        panic!("internal logic error 2"); // конец файла, при этом почему то всё ещё считаем запрос
-                                    }
-                                }
-                            } else {
-                                panic!("internal logic error 1");
-                            }
-                            if opened_exist.len() == 0 {
-                                return Err(FileReadingError::NotExist);
-                            }
-                        } else {
-                            panic!("internal logic error 0");
-                        }
-                    }
-                }
-                Event::StartRequest(from) => {
-                    if in_request {
-                        panic!("internal logic error -1");
-                    }
-                    in_request = true;
-                    if let Some((version, filename)) = opened_exist.last_key_value() {
-                        ranges.push((*filename, (from, EndOfFileRange::ByteIndex(0))))
-                    } else {
-                        panic!("internal logic error -2");
-                    }
-                }
-                Event::EndRequest(end) => {
-                    let range = ranges.last_mut().unwrap();
-                    range.1.1 = end;
-                    in_request = false;
-                }
-            }
-
-
-            // let cur_exist = &exist_ranges[exist_index];
-            // let cur_req = &required_ranges[required_index];
-            //
-            // if cur_exist.get_start() > cur_req.0 {
-            //     return Err(FileReadingError::ChunkIsNotExist(vec![]))
-            // }
-
-        }
+        let ranges = calculate_sources_for_ranges(&events)?;
 
         type StreamType = Result<(FileRange, FileStream), FileReadingError>;
         let streams: Vec<StreamType> = futures::stream::iter(ranges.into_iter())
             .map(|range| async move {
-                let file = tokio::fs::File::open(self.chunk_filepath(path, range.0)).await.map_err(|v| FileReadingError::NotExist)?;
+                let file = tokio::fs::File::open(self.chunk_filepath(path, range.0)).await.map_err(|v| FileReadingError::Retryable)?;
 
+                // крч нужно тут чинить, чтобы читатель стал send + sync? (sync наверное не нужно)
+                // tx rx?? (но тогда источник будет горячим, никакого обратного давления)
                 let buf = BufReader::with_capacity(64 * 1024, file);
                 let reader = ReaderStream::new(buf);
 
@@ -292,8 +205,91 @@ fn cast_end_of_chunk_to_index(end_of_file_range: &EndOfFileRange) -> &u64 {
     }
 }
 
+fn calculate_sources_for_ranges(events: &[Event]) -> Result<Vec<(ChunkFilename, (u64, EndOfFileRange))>, FileReadingError> {
+    let mut in_request = false;
+    let mut ranges: Vec<(ChunkFilename, (u64, EndOfFileRange))> = Vec::new();
+    let mut opened_exist = BTreeMap::new();
+    let mut already_closed = HashSet::new();
+
+    for event in events {
+        match event {
+            Event::StartExist(from, version, id) => {
+                let old_val_o = opened_exist.insert(*version, *id);
+                if let Some(old_val) = old_val_o {
+                    already_closed.insert(*version);
+                }
+
+                if in_request {
+                    let new_max_version = opened_exist.last_key_value().unwrap();
+                    if let Some(last_range) = ranges.last_mut() {
+                        if new_max_version.0 > last_range.0.get_version() {
+                            last_range.1.1 = EndOfFileRange::ByteIndex(from - 1);
+                            ranges.push((*new_max_version.1, (*from, EndOfFileRange::ByteIndex(0))))
+                        }
+                    } else {
+                        panic!("internal logic error 2");
+                    }
+                }
+            }
+            Event::EndExist(end_exist, version, chunk_filename) => {
+                if let None = already_closed.get(version) {
+                    opened_exist.remove(version);
+                } else {
+                    already_closed.remove(version);
+                }
+
+                if in_request {
+                    if let Some(new_max_version) = opened_exist.last_key_value() {
+                        if let Some(last_request) = ranges.last_mut() {
+                            if last_request.0 == *chunk_filename {
+                                last_request.1.1 = *end_exist;
+                                if let EndOfFileRange::ByteIndex(prev_end) = end_exist {
+                                    if let EndOfFileRange::ByteIndex(new_end) = new_max_version.1.get_end() {
+                                        if *new_end < prev_end + 1 {
+                                            panic!("internal logic error 4");
+                                        }
+                                    } else {
+                                        panic!("internal logic error 3");
+                                    }
+                                    ranges.push((*new_max_version.1, (prev_end + 1, EndOfFileRange::ByteIndex(0))))
+                                } else {
+                                    panic!("internal logic error 2"); // конец файла, при этом почему то всё ещё считаем запрос
+                                }
+                            }
+                        } else {
+                            panic!("internal logic error 1");
+                        }
+                        if opened_exist.len() == 0 {
+                            return Err(FileReadingError::NotExist);
+                        }
+                    } else {
+                        panic!("internal logic error 0");
+                    }
+                }
+            }
+            Event::StartRequest(from) => {
+                if in_request {
+                    panic!("internal logic error -1");
+                }
+                in_request = true;
+                if let Some((version, filename)) = opened_exist.last_key_value() {
+                    ranges.push((*filename, (*from, EndOfFileRange::ByteIndex(0))))
+                } else {
+                    panic!("internal logic error -2");
+                }
+            }
+            Event::EndRequest(end) => {
+                let range = ranges.last_mut().unwrap();
+                range.1.1 = *end;
+                in_request = false;
+            }
+        }
+    }
+    Ok(ranges)
+}
+
 fn check_ranges(ranges: &[FileRange]) -> bool {
-    let mut sorted = ranges.clone();
+    let mut sorted = ranges.to_owned();
     sorted.sort_unstable_by_key(|v| v.0);
 
     let mut prev_r = EndOfFileRange::ByteIndex(0);
@@ -308,5 +304,5 @@ fn check_ranges(ranges: &[FileRange]) -> bool {
         prev_r = range.1;
     }
 
-    return false;
+    false
 }

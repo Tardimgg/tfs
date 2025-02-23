@@ -38,6 +38,12 @@ async fn create_folder(folder_path: web::Path<String>, fs: web::Data<VirtualFS>)
     HttpResponse::Ok().into()
 }
 
+#[get("/meta/node/{tail:.*}")]
+async fn get_file_meta(file_path: web::Path<String>, fs: web::Data<VirtualFS>) -> Result<impl Responder, ApiException> {
+    let res = fs.get_ref().get_node_meta(&file_path).await?;
+    Ok(web::Json(res))
+}
+
 #[get("/file/{tail:.*}")]
 async fn get_file(file_path: web::Path<String>, req: HttpRequest, fs: web::Data<VirtualFS>) -> Result<impl Responder, ApiException> {
 
@@ -49,10 +55,18 @@ async fn get_file(file_path: web::Path<String>, req: HttpRequest, fs: web::Data<
         None
     };
 
+    // let file = actix_files::NamedFile::open_async("/home/oop/RustroverProjects/tfs/root/asd/chunks/ALL_v0").await.unwrap();
+    // return Ok(file)
+    // кажется поддержки возврата несколких чанков нет даже в NamedFile => нужно реализовать свою структуру,
+    // которая будет собирать чанки вместе и между ними писать нужную мету
+    // https://github.com/actix/actix-web/pull/227
+    // https://github.com/actix/actix-web/issues/60
+
     let mut file_o = fs.get_ref().get_file_content(&file_path, range_o).await?;
     if let Some(file) = file_o {
         return Ok(HttpResponse::Ok().streaming(file.get_stream()))
     }
+    // HttpResponse::PartialContent().
     Ok(HttpResponse::NotFound().into())
 }
 
@@ -68,5 +82,6 @@ pub fn config() -> Scope {
         .service(get_folder)
         .service(create_folder)
         .service(get_file)
+        .service(get_file_meta)
         .service(create_file)
 }
