@@ -25,8 +25,10 @@ use std::thread::sleep;
 use std::time::SystemTime;
 use actix::fut::try_future::MapErr;
 use actix_web::{App, HttpServer, web};
+use actix_web::rt::signal;
 use actix_web::web::Data;
 use async_trait::async_trait;
+use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 use crate::config::global_config::GlobalConfig;
 use crate::heartbeat::Heartbeat;
@@ -75,17 +77,36 @@ async fn main() -> Result<(), AppError> {
         .build();
     let virtual_fs = Arc::new(virtual_fs);
 
+    let cancellation_token = tokio_util::sync::CancellationToken::new();
+
+
     let cloned_fs = virtual_fs.clone();
     let cloned_config = config.clone();
     let cloned_storage = storage.clone();
-    tokio::spawn(async move {
-        let heartbeat = Heartbeat::builder()
-            .fs(cloned_fs)
-            .config(cloned_config)
-            .storage(cloned_storage)
-            .build();
+    let cloned_cancellation_token = cancellation_token.clone();
+    tokio::task::spawn_blocking(|| {
+        Handle::current().block_on(async move {
+            let heartbeat = Heartbeat::builder()
+                .fs(cloned_fs)
+                .config(cloned_config)
+                .storage(cloned_storage)
+                .cancellation_token(cloned_cancellation_token)
+                .build();
 
-        heartbeat.init(rx).await;
+            heartbeat.init(rx).await;
+        });
+    });
+
+    tokio::spawn(async move {
+        match signal::ctrl_c().await {
+            Ok(()) => {
+                cancellation_token.cancel();
+            },
+            Err(err) => {
+                cancellation_token.cancel();
+                eprintln!("Unable to listen for shutdown signal: {}", err);
+            },
+        }
     });
 
     HttpServer::new(move || {
@@ -97,10 +118,8 @@ async fn main() -> Result<(), AppError> {
             .service(controllers::virtual_fs_controller::virtual_fs_controller::config())
     }).bind(("0.0.0.0", port))?
         .run()
-        .await
-        .unwrap();
-
-
+        .await?;
+    
     Ok(())
 
 

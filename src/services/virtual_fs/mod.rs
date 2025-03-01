@@ -23,7 +23,7 @@ use crate::services::dht_map::model::DhtNodeId;
 use crate::services::file_storage::errors::*;
 use crate::services::file_storage::file_storage::{FileStorage, FileStream};
 use crate::services::file_storage::model::{ChunkVersion, EndOfFileRange, FileMeta, FileRange, FolderMeta};
-use crate::services::virtual_fs::models::{FileKeeper, GlobalFileInfo};
+use crate::services::virtual_fs::models::{FileKeeper, FileRangeEnd, GlobalFileInfo};
 
 #[derive(TypedBuilder)]
 pub struct VirtualFS {
@@ -117,9 +117,10 @@ impl VirtualFS {
 
         let keeper = FileKeeper::builder()
             .ip(self.id)
-            .ranges(vec![(0, u64::MAX)])
+            .ranges(vec![(0, FileRangeEnd::EnfOfFile(u64::MAX))])
             .build();
 
+        //что делать со знанием, что actix web не меняет поток в течении ответа на запрос (не требуется Send на future)
         let file_info = GlobalFileInfo::builder()
             .filename(path.to_string())
             .keepers(vec![keeper])

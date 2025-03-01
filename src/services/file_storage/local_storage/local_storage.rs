@@ -38,8 +38,8 @@ impl LocalStorage {
     }
 }
 
-// #[async_trait(?Send)]
-#[async_trait]
+#[async_trait(?Send)]
+// #[async_trait]
 impl FileStorage for LocalStorage {
     async fn save(&self, path: &str, range: FileRange, version: ChunkVersion, mut data: FileStream) -> Result<(), FileSavingError> {
         let chunks_folder = self.filepath(path);
@@ -155,6 +155,32 @@ impl FileStorage for LocalStorage {
 
 
         // Ok(vec![((0, EndOfFileRange::EndOfFile), FileStream::TokioFile(reader))])
+    }
+
+    async fn get_file_meta(&self, path: &str) -> Result<Vec<(ChunkVersion, FileRange)>, FileReadingError> {
+        let chunks_folder = self.filepath(path);
+        let mut meta = Vec::new();
+
+        let mut exist_files = tokio::fs::read_dir(&chunks_folder).await.unwrap();
+        while let Ok(file_o) = exist_files.next_entry().await {
+            if let Some(file) = file_o {
+                if let Some(filename) =  file.file_name().to_str() {
+                    if let Ok(chunk_filename) = ChunkFilename::try_from(filename) {
+
+                        let chunk_version = chunk_filename.get_version();
+
+                        let end = match chunk_filename {
+                            ChunkFilename::All(_) => EndOfFileRange::LastByte,
+                            ChunkFilename::Range(_, to, _) => to
+                        };
+                        meta.push((*chunk_version, (*chunk_filename.get_start(), end)));
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+        Ok(meta)
     }
 
     async fn move_file(&self, from: &str, to: &str) -> Result<(), String> {

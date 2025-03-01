@@ -40,12 +40,13 @@ impl FileStream {
 }
 
 // #[async_trait(?Send)]
-#[async_trait]
+#[async_trait(?Send)]
 pub trait FileStorage {
 // нужно как то построить заборы над путями, может же придти совсем рандомный путь куда угодно
     async fn save(&self, path: &str, range: FileRange, version: ChunkVersion, data: FileStream) -> Result<(), FileSavingError>;
     // нужно научится хранить id версии хранимого куска
     async fn get_file<'a>(&self, path: &str, ranges: Option<&'a [FileRange]>, max_version: Option<ChunkVersion>) -> Result<Vec<(FileRange, FileStream)>, FileReadingError>;
+    async fn get_file_meta(&self, path: &str) -> Result<Vec<(ChunkVersion, FileRange)>, FileReadingError>;
     async fn move_file(&self, from: &str, to: &str) -> Result<(), String>;
     async fn get_folder_content(&self, path: &str) -> Result<FolderMeta, FolderReadingError>;
     async fn create_folder(&self, path: &str) -> Result<(), CreateFolderError>;

@@ -4,12 +4,28 @@ use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
 use crate::services::dht_map::model::DhtNodeId;
 
-type FileRangeInfo = (u64, u64);
+#[derive(Debug, Serialize, Deserialize)]
+pub enum FileRangeEnd {
+    EndOfRange(u64),
+    EnfOfFile(u64)
+}
+
+impl FileRangeEnd {
+
+    pub fn get_index(&self) -> u64 {
+        match self {
+            FileRangeEnd::EndOfRange(v) => *v,
+            FileRangeEnd::EnfOfFile(v) => *v
+        }
+    }
+
+}
+pub type FileRangeInfo = (u64, FileRangeEnd);
 
 #[derive(Debug, Serialize, Deserialize, TypedBuilder)]
 pub struct FileKeeper {
-    ip: DhtNodeId,
-    ranges: Vec<FileRangeInfo>
+    pub ip: DhtNodeId,
+    pub ranges: Vec<FileRangeInfo>
 }
 
 #[derive(Debug, Serialize, Deserialize, TypedBuilder)]
