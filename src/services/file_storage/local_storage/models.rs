@@ -1,5 +1,6 @@
 use thiserror::Error;
-use crate::services::file_storage::model::{ChunkVersion, ChunkVersionParseError, EndOfFileRange, FileRange};
+use crate::common::file_range::{EndOfFileRange, FileRange};
+use crate::services::file_storage::model::{ChunkVersion, ChunkVersionParseError};
 
 
 /*

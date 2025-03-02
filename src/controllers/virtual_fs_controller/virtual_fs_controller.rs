@@ -4,6 +4,7 @@ use std::fmt::format;
 use std::io::{Read};
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::Arc;
 use actix_files::NamedFile;
 use actix_multipart::form::{MultipartCollect, MultipartForm};
 use actix_multipart::form::tempfile::TempFile;
@@ -19,8 +20,8 @@ use tokio::io::{AsyncReadExt, BufReader};
 use tokio_util::io::ReaderStream;
 use crate::common::buffered_consumer::BufferedConsumer;
 use crate::controllers::virtual_fs_controller::error::ApiException;
-use crate::services::file_storage::model::{FileMeta, FolderMeta};
-use crate::services::virtual_fs::VirtualFS;
+use crate::services::file_storage::model::{FileMeta, FolderMeta, NodeType};
+use crate::services::virtual_fs::virtual_fs::VirtualFS;
 
 #[derive(Serialize, Deserialize)]
 struct V {
@@ -28,24 +29,31 @@ struct V {
 }
 
 #[get("/folder{tail:.*}")]
-async fn get_folder(folder_path: web::Path<String>, fs: web::Data<VirtualFS>) -> Result<Json<FolderMeta>, ApiException> {
+async fn get_folder(folder_path: web::Path<String>, fs: web::Data<Arc<VirtualFS>>) -> Result<Json<FolderMeta>, ApiException> {
     Ok(web::Json(fs.get_ref().get_folder_content(&folder_path).await?))
 }
 
 #[post("/folder/{tail:.*}")]
-async fn create_folder(folder_path: web::Path<String>, fs: web::Data<VirtualFS>) -> HttpResponse {
+async fn create_folder(folder_path: web::Path<String>, fs: web::Data<Arc<VirtualFS>>) -> HttpResponse {
     fs.get_ref().create_folder(&folder_path).await;
     HttpResponse::Ok().into()
 }
 
 #[get("/meta/node/{tail:.*}")]
-async fn get_file_meta(file_path: web::Path<String>, fs: web::Data<VirtualFS>) -> Result<impl Responder, ApiException> {
+async fn get_file_meta(file_path: web::Path<String>, fs: web::Data<Arc<VirtualFS>>) -> Result<impl Responder, ApiException> {
     let res = fs.get_ref().get_node_meta(&file_path).await?;
     Ok(web::Json(res))
 }
 
+#[get("/stored_parts/{tail:.*}")]
+async fn get_stored_parts(filepath: web::Path<String>, req: HttpRequest, fs: web::Data<Arc<VirtualFS>>) -> Result<impl Responder, ApiException> {
+    let meta = fs.get_ref().get_stored_parts_meta(&filepath).await.map_err(|v| ApiException::InternalError(v))?;
+    Ok(web::Json(meta))
+
+}
+
 #[get("/file/{tail:.*}")]
-async fn get_file(file_path: web::Path<String>, req: HttpRequest, fs: web::Data<VirtualFS>) -> Result<impl Responder, ApiException> {
+async fn get_file(file_path: web::Path<String>, req: HttpRequest, fs: web::Data<Arc<VirtualFS>>) -> Result<impl Responder, ApiException> {
 
     let range_header_o = req.headers().get(actix_web::http::header::RANGE);
     let range_o = if let Some(range_header) = range_header_o {
@@ -71,9 +79,9 @@ async fn get_file(file_path: web::Path<String>, req: HttpRequest, fs: web::Data<
 }
 
 #[post("/file/{tail:.*}")]
-async fn create_file(filename: web::Path<String>, mut payload: web::Payload, fs: web::Data<VirtualFS>) -> Result<Json<FileMeta>, ApiException> {
+async fn create_file(filename: web::Path<String>, mut payload: web::Payload, fs: web::Data<Arc<VirtualFS>>) -> Result<Json<FileMeta>, ApiException> {
     let mut meta =  fs.get_ref().create_file(&filename, payload).await;
-    Ok(web::Json(FileMeta::builder().name(filename.to_string()).build()))
+    Ok(web::Json(FileMeta::builder().name(filename.to_string()).node_type(NodeType::File).build()))
 }
 
 pub fn config() -> Scope {
@@ -82,6 +90,7 @@ pub fn config() -> Scope {
         .service(get_folder)
         .service(create_folder)
         .service(get_file)
+        .service(get_stored_parts)
         .service(get_file_meta)
         .service(create_file)
 }

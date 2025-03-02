@@ -31,11 +31,11 @@ use async_trait::async_trait;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 use crate::config::global_config::GlobalConfig;
-use crate::heartbeat::Heartbeat;
+use crate::heartbeat::heartbeat::Heartbeat;
 use crate::services::dht_map::dht_map::DHTMap;
 use crate::services::dht_map::model::DhtNodeId;
 use crate::services::file_storage::local_storage::local_storage::LocalStorage;
-use crate::services::virtual_fs::VirtualFS;
+use crate::services::virtual_fs::virtual_fs::VirtualFS;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), AppError> {
@@ -49,7 +49,8 @@ async fn main() -> Result<(), AppError> {
     let args: Vec<String> = env::args().collect();
     let port = args.get(1).map(|v| v.parse::<u16>().unwrap_or(8080)).unwrap_or(8080);
 
-    let other_ports = args.iter().skip(2).map(|v| v.parse::<u16>().unwrap()).collect::<Vec<u16>>();
+    println!("{:?}", args);
+    let other_ports = args.iter().skip(2).map(|v| v.parse::<u16>()).filter(Result::is_ok).map(Result::unwrap).collect::<Vec<u16>>();
     let other_ips = other_ports.into_iter().map(|v| format!("{}:{}", "127.0.0.1", v)).collect::<Vec<String>>();
 
     println!("used port: {}", port);
@@ -75,6 +76,8 @@ async fn main() -> Result<(), AppError> {
         .config(config.clone())
         .state_updater(tx)
         .build();
+
+    virtual_fs.init().await;
     let virtual_fs = Arc::new(virtual_fs);
 
     let cancellation_token = tokio_util::sync::CancellationToken::new();
@@ -111,15 +114,15 @@ async fn main() -> Result<(), AppError> {
 
     HttpServer::new(move || {
         App::new()
-            .app_data(dht.clone())
-            .app_data(config.clone())
-            .app_data(virtual_fs.clone())
+            .app_data(Data::new(dht.clone()))
+            .app_data(Data::new(config.clone()))
+            .app_data(Data::new(virtual_fs.clone()))
             // .app_data(web::PayloadConfig::new(1 * 1024 * 1024 * 1024))
             .service(controllers::virtual_fs_controller::virtual_fs_controller::config())
     }).bind(("0.0.0.0", port))?
         .run()
         .await?;
-    
+
     Ok(())
 
 

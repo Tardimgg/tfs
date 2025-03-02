@@ -36,3 +36,4 @@ dashmap = "6.1.0"
 tokio-scoped = "0.2.0"
 awc = "3.5.1"
 moka = { version = "0.12.10" , features = ["future"]}
+reqwest = { version = "0.12.12" , features = ["stream", "json"]}

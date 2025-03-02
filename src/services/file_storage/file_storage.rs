@@ -10,8 +10,10 @@ use futures::FutureExt;
 use tokio::fs::File;
 use tokio::io::BufReader;
 use tokio_util::io::ReaderStream;
+use crate::common::file_range::FileRange;
 use crate::services::file_storage::errors::*;
-use crate::services::file_storage::model::{ChunkVersion, FileRange, FolderMeta};
+use crate::services::file_storage::model::{ChunkVersion, FolderMeta};
+use crate::services::virtual_fs::models::StoredFileRange;
 
 pub enum FileStream {
     Payload(web::Payload),
@@ -46,7 +48,7 @@ pub trait FileStorage {
     async fn save(&self, path: &str, range: FileRange, version: ChunkVersion, data: FileStream) -> Result<(), FileSavingError>;
     // нужно научится хранить id версии хранимого куска
     async fn get_file<'a>(&self, path: &str, ranges: Option<&'a [FileRange]>, max_version: Option<ChunkVersion>) -> Result<Vec<(FileRange, FileStream)>, FileReadingError>;
-    async fn get_file_meta(&self, path: &str) -> Result<Vec<(ChunkVersion, FileRange)>, FileReadingError>;
+    async fn get_file_meta(&self, path: &str) -> Result<Vec<StoredFileRange>, FileReadingError>;
     async fn move_file(&self, from: &str, to: &str) -> Result<(), String>;
     async fn get_folder_content(&self, path: &str) -> Result<FolderMeta, FolderReadingError>;
     async fn create_folder(&self, path: &str) -> Result<(), CreateFolderError>;

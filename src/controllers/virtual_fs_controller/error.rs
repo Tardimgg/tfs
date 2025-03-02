@@ -65,7 +65,10 @@ impl From<CreateFolderError> for ApiException {
 
 impl From<FileSavingError> for ApiException {
     fn from(value: FileSavingError) -> Self {
-        match value { FileSavingError::AlreadyExist => FileAlreadyExist }
+        match value {
+            FileSavingError::AlreadyExist => FileAlreadyExist,
+            FileSavingError::Other(v) => InternalError(v)
+        }
     }
 }
 

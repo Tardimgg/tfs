@@ -3,48 +3,6 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use typed_builder::TypedBuilder;
 
-#[derive(Copy, Clone, Debug, Hash)]
-pub enum EndOfFileRange {
-    LastByte,
-    ByteIndex(u64)
-}
-
-impl Eq for EndOfFileRange {}
-
-impl PartialEq<Self> for EndOfFileRange {
-    fn eq(&self, other: &Self) -> bool {
-        self.partial_cmp(other).unwrap().is_eq()
-    }
-}
-
-impl PartialOrd<Self> for EndOfFileRange {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        match self {
-            EndOfFileRange::LastByte => {
-                if let EndOfFileRange::LastByte = other {
-                    Some(Ordering::Equal)
-                } else {
-                    Some(Ordering::Greater)
-                }
-            }
-            EndOfFileRange::ByteIndex(end) => {
-                if let EndOfFileRange::ByteIndex(other_end) = other {
-                    Some(end.cmp(other_end))
-                } else {
-                    Some(Ordering::Less)
-                }
-            }
-        }
-    }
-}
-
-impl Ord for EndOfFileRange {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap()
-    }
-}
-
-pub type FileRange = (u64, EndOfFileRange);
 
 #[derive(Debug, Copy, Clone, Hash)]
 pub struct ChunkVersion(pub u64);
@@ -85,9 +43,16 @@ impl TryFrom<&str> for ChunkVersion {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+pub enum NodeType {
+    File,
+    Folder
+}
+
 #[derive(Serialize, Deserialize, TypedBuilder)]
 pub struct FileMeta {
-    name: String
+    pub name: String,
+    pub node_type: NodeType
 }
 
 
@@ -95,5 +60,5 @@ pub struct FileMeta {
 pub struct FolderMeta {
 
     // #[builder(default=vec![])]
-    files: Vec<FileMeta>
+    pub files: Vec<FileMeta>
 }

@@ -1,10 +1,12 @@
-use crate::services::file_storage::model::EndOfFileRange;
+use crate::common::file_range::EndOfFileRange;
+use crate::services::virtual_fs::models::StoredFileRangeEnd;
 
+#[derive(Copy, Clone)]
 pub enum RangeEvent {
     Start(u64),
     End(u64),
     StoredStart(u64, usize),
-    StoredEnd(EndOfFileRange, usize)
+    StoredEnd(StoredFileRangeEnd, usize)
 }
 
 impl RangeEvent {
@@ -16,8 +18,8 @@ impl RangeEvent {
             RangeEvent::StoredStart(v, _) => (*v, 1),
             RangeEvent::StoredEnd(v, _) => {
                 match v {
-                    EndOfFileRange::LastByte => (u64::MAX, 2),
-                    EndOfFileRange::ByteIndex(v) => (*v, 2)
+                    StoredFileRangeEnd::EnfOfFile(v) => (*v, 2),
+                    StoredFileRangeEnd::EndOfRange(v) => (*v, 2)
                 }
             }
         }

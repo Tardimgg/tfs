@@ -8,10 +8,12 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use tokio::io::{AsyncWriteExt, BufReader, BufWriter};
 use tokio_util::io::{ReaderStream, StreamReader};
+use crate::common::file_range::{EndOfFileRange, FileRange};
 use crate::services::file_storage::errors::{CreateFolderError, FileReadingError, FileSavingError, FolderReadingError};
 use crate::services::file_storage::file_storage::{FileStorage, FileStream};
 use crate::services::file_storage::local_storage::models::{ChunkFilename, Event};
-use crate::services::file_storage::model::{ChunkVersion, EndOfFileRange, FileMeta, FileRange, FolderMeta};
+use crate::services::file_storage::model::{ChunkVersion, FileMeta, FolderMeta, NodeType};
+use crate::services::virtual_fs::models::{StoredFileRange, StoredFileRangeEnd};
 
 pub struct LocalStorage {
     pub base_path: String
@@ -19,9 +21,10 @@ pub struct LocalStorage {
 
 
 impl LocalStorage {
+    // добавить перезапись пути, с добавлением суффикам -folder к обычным папкам и суффикса -chunks к папке с чанками
 
     fn filepath(&self, path: &str) -> PathBuf {
-        PathBuf::from(format!("{}/{}", self.base_path.as_str(), path))
+        PathBuf::from(format!("{}/{}-chunks", self.base_path.as_str(), path))
     }
 
     fn range_filepath(&self, path: &str, range: FileRange, version: ChunkVersion) -> PathBuf {
@@ -30,11 +33,11 @@ impl LocalStorage {
     }
 
     fn chunk_filepath(&self, path: &str, chunk_filename: ChunkFilename) -> PathBuf {
-        PathBuf::from(format!("{}/{}/{}", self.base_path.as_str(), path, String::from(chunk_filename)))
+        PathBuf::from(format!("{}/{}-chunks/{}", self.base_path.as_str(), path, String::from(chunk_filename)))
     }
 
-    fn old_filepath(&self, path: &str, first_byte: u64) -> String {
-        format!("{}/{}_{}", self.base_path.as_str(), path, first_byte)
+    fn folder_path(&self, path: &str) -> String {
+        format!("{}/{}", self.base_path.as_str(), path)
     }
 }
 
@@ -157,27 +160,35 @@ impl FileStorage for LocalStorage {
         // Ok(vec![((0, EndOfFileRange::EndOfFile), FileStream::TokioFile(reader))])
     }
 
-    async fn get_file_meta(&self, path: &str) -> Result<Vec<(ChunkVersion, FileRange)>, FileReadingError> {
+    async fn get_file_meta(&self, path: &str) -> Result<Vec<StoredFileRange>, FileReadingError> {
         let chunks_folder = self.filepath(path);
         let mut meta = Vec::new();
 
         let mut exist_files = tokio::fs::read_dir(&chunks_folder).await.unwrap();
-        while let Ok(file_o) = exist_files.next_entry().await {
-            if let Some(file) = file_o {
-                if let Some(filename) =  file.file_name().to_str() {
-                    if let Ok(chunk_filename) = ChunkFilename::try_from(filename) {
+        while let Ok(Some(file)) = exist_files.next_entry().await {
+            if let Some(filename) =  file.file_name().to_str() {
+                if let Ok(chunk_filename) = ChunkFilename::try_from(filename) {
 
-                        let chunk_version = chunk_filename.get_version();
+                    let chunk_version = chunk_filename.get_version();
 
-                        let end = match chunk_filename {
-                            ChunkFilename::All(_) => EndOfFileRange::LastByte,
-                            ChunkFilename::Range(_, to, _) => to
-                        };
-                        meta.push((*chunk_version, (*chunk_filename.get_start(), end)));
-                    }
+                    let end = match chunk_filename {
+                        ChunkFilename::All(_) => StoredFileRangeEnd::EnfOfFile(file.metadata().await.unwrap().len()),
+                        ChunkFilename::Range(from, to, _) => {
+                            match to {
+                                EndOfFileRange::LastByte => StoredFileRangeEnd::EndOfRange(from + file.metadata().await.unwrap().len()),
+                                EndOfFileRange::ByteIndex(byte_index) => StoredFileRangeEnd::EndOfRange(byte_index)
+                            }
+                        }
+                    };
+
+                    let stored_range = StoredFileRange {
+                        from: *chunk_filename.get_start(),
+                        to: end,
+                        version: chunk_version.0,
+                    };
+                    // meta.push((*chunk_version, (*chunk_filename.get_start(), end)));
+                    meta.push(stored_range);
                 }
-            } else {
-                break;
             }
         }
         Ok(meta)
@@ -188,13 +199,21 @@ impl FileStorage for LocalStorage {
     }
 
     async fn get_folder_content(&self, path: &str) -> Result<FolderMeta, FolderReadingError> {
-        let folder_path = self.old_filepath(path, 0);
+        let folder_path = self.folder_path(path);
         let mut dir = tokio::fs::read_dir(folder_path).await.map_err(|v| FolderReadingError::NotExist)?;
 
         let mut files = Vec::new();
         while let Some(entry) = dir.next_entry().await.map_err(|v| FolderReadingError::InternalError(v.to_string()))? {
+            let filename = entry.file_name().to_str().unwrap().to_string();
+            let mut external_filename: &str = &filename;
+            let mut node_type = NodeType::Folder;
+            if filename.ends_with("-chunks") {
+                external_filename = &filename[0..filename.len() - 7];
+                node_type = NodeType::File;
+            }
             let meta = FileMeta::builder()
-                .name(entry.file_name().to_str().unwrap().to_string())
+                .name(external_filename.to_string())
+                .node_type(node_type)
                 .build();
 
             files.push(meta);
@@ -330,5 +349,5 @@ fn check_ranges(ranges: &[FileRange]) -> bool {
         prev_r = range.1;
     }
 
-    false
+    true
 }
