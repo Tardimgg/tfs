@@ -12,12 +12,15 @@ use rand::rngs::ThreadRng;
 use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
 use typed_builder::TypedBuilder;
+use crate::common::default_error::DefaultError;
 use crate::common::file_range::{EndOfFileRange, FileRange};
 use crate::common::state_update::StateUpdate;
 use crate::config::global_config::{ConfigKey, GlobalConfig};
+use crate::heartbeat::errors::UpdateDhtError;
 use crate::heartbeat::models::RangeEvent;
 use crate::services::dht_map::dht_map::DHTMap;
 use crate::services::dht_map::model::DhtNodeId;
+use crate::services::file_storage::errors::FileReadingError;
 use crate::services::file_storage::file_storage::FileStorage;
 use crate::services::file_storage::model::{ChunkVersion, NodeType};
 use crate::services::internal_communication::InternalCommunication;
@@ -56,14 +59,14 @@ impl Heartbeat {
 
         self.init_db().await;
 
-        let mut interval = tokio::time::interval(Duration::from_secs(20));
-
 
         loop {
-            interval.tick().await;
+            tokio::time::sleep(Duration::from_secs(20)).await;
             // panic::catch_unwind(|| async {
 
-                self.replication_files().await;
+                if let Err(err) = self.replication_files().await {
+                    println!("replication err {}", err);
+                }
 
             // });
             if self.cancellation_token.is_cancelled() {
@@ -94,8 +97,8 @@ impl Heartbeat {
 
     }
 
-    async fn replication_files(&self) {
-        self.fs.init().await; // тут подумать, может перейти на анонсы dht, может делать только при определённых условиях и каким то таймаутом
+    async fn replication_files(&self) -> Result<(), String> {
+        self.fs.init().await?; // тут подумать, может перейти на анонсы dht, может делать только при определённых условиях и каким то таймаутом
 
         // если в dht версия ниже, то это невозможно, бекапим запись. Если отсутствует или больше, то допустим что ок
         println!("{:?}", self.state);
@@ -111,8 +114,10 @@ impl Heartbeat {
         let replication_factor = usize::from_str(&self.config.get_val(ConfigKey::ReplicationFactor).await).unwrap() - 1; // себя не считаем
         if let Ok(keepers) = keepers_result {
             if keepers.len() == 0 {
-                return
+                return Ok(());
             }
+
+            let mut path_to_delete = Vec::new();
             for path in self.state.iter() {
                 let mut events = Vec::new();
 
@@ -135,17 +140,38 @@ impl Heartbeat {
                                 // remove from dht
                             }
                         } else {
-                            self.update_dht_state(path.key(), &keeper.ranges).await;
+                            if let Err(r) = self.update_dht_state(path.key(), &keeper.ranges).await {
+                                match r {
+                                    UpdateDhtError::FileNotFound => {
+                                        path_to_delete.push(path.key().clone())
+                                    }
+                                    UpdateDhtError::InternalError => {}
+                                }
+                                continue;
+                            }
                             self_updated = true;
                         }
                     }
                 }
                 if !self_updated {
-                    self.update_dht_state(path.key(), &vec![]).await;
+                    if let Err(r) = self.update_dht_state(path.key(), &vec![]).await {
+                        continue;
+                    }
                 }
 
 
-                let mut local_chunks = self.storage.get_file_meta(&path.key()).await.unwrap();
+                let mut local_chunks_res = self.storage.get_file_meta(&path.key()).await;
+                let mut local_chunks = if let Ok(local_chunks) = local_chunks_res {
+                    local_chunks
+                } else {
+                    match local_chunks_res.err().unwrap() {
+                        FileReadingError::NotExist | FileReadingError::ChunkIsNotExist(_)=> {
+                            path_to_delete.push(path.key().clone());
+                        },
+                        _ => {}
+                    }
+                    continue;
+                };
                 for i in (0..local_chunks.len()) {
                     let chunk = local_chunks[i];
                     events.push(RangeEvent::StoredStart(chunk.from, i));
@@ -185,14 +211,43 @@ impl Heartbeat {
                 }
 
                 for i in bad_segments {
+                    // все ещё нужно реализовать проверку что реплицируешь именно ты, с каким то таймаутом ожидания, после которого реплицирует кто то другой
+
                     // нужно подумать как тут не отослать узлу, у которого уже есть этот чанк
+                    // если полная репликация на все шарды, то нужно как-то рандом к этом приготовить, может больше ретраев сделать,
+                    // и проверять среди уже известной инфы, а не ходить каждый раз по сети
                     let segment = local_chunks[i];
 
-                    let keeper_n = RANDOM.take().gen_range(0..keepers.len());
-                    let keeper = keepers[keeper_n];
+                    let mut new_keeper = None;
+                    let mut checked = HashSet::new();
+                    for _ in 0..(replication_factor * 3) {
+                        let keeper_n = RANDOM.take().gen_range(0..keepers.len());
+                        let keeper = keepers[keeper_n];
 
-                    // temp temp temp^2 code
-                    // let mut file = self.storage.get_file(path.key(), None, None).await;
+                        // temp temp temp^2 code
+
+                        if checked.contains(&keeper) {
+                            continue;
+                        }
+                        let already_stored_o = CLIENT.take().get_stored_parts_of_file(path.key(), keeper).await;
+                        checked.insert(keeper);
+                        if let Ok(already_stored) = already_stored_o {
+                            println!("already stored file {}: {:?}", path.key(), already_stored);
+                            if already_stored.contains(&segment) {
+                                continue;
+                            }
+                        } else {
+                            println!("already stored {} : None", path.key());
+                            new_keeper = Some(keeper);
+                            break;
+                        }
+                    }
+                    let new_keeper = if let Some(keeper) = new_keeper {
+                        keeper
+                    } else {
+                        continue;
+                    };
+
 
                     let chunk_version = ChunkVersion(segment.version);
                     let mut file = self.storage.get_file(path.key(), Some(&vec![FileRange::from(segment)]), Some(chunk_version)).await.unwrap();
@@ -205,17 +260,30 @@ impl Heartbeat {
                         StoredFileRangeEnd::EnfOfFile(_) =>  ByteRangeSpec::From(segment.from)
                     };
                     println!("send file {} with range {} {:?}", path.key(), segment.from, segment.to);
-                    CLIENT.take().send_file(path.key(), keeper,
+                    if let Err(e) = CLIENT.take().send_file(path.key(), new_keeper,
                                             file.swap_remove(0).1,
-                                            Range::Bytes(vec![range])).await;
+                                            Range::Bytes(vec![range])).await {
+                        println!("errow while send file {} to {:?}", path.key(), new_keeper);
+                    }
                 }
             }
         }
+        Ok(())
     }
 
-    async fn update_dht_state(&self, filename: &str, dht_state: &[StoredFileRange]) {
+    async fn update_dht_state(&self, filename: &str, dht_state: &[StoredFileRange]) -> Result<(), UpdateDhtError> {
         let mut to_add_to_dht = Vec::new();
-        let stored_local = self.storage.get_file_meta(filename).await.unwrap();
+        let stored_local = match self.storage.get_file_meta(filename).await {
+            Ok(v) => v,
+            Err(err) => {
+                return Err(match err {
+                    FileReadingError::NotExist => UpdateDhtError::FileNotFound,
+                    FileReadingError::BadRequest => UpdateDhtError::InternalError,
+                    FileReadingError::ChunkIsNotExist(_) => UpdateDhtError::FileNotFound,
+                    FileReadingError::Retryable => UpdateDhtError::InternalError
+                });
+            }
+        };
         let mut dht_chunks = dht_state.iter().map(|v| *v).collect::<HashSet<StoredFileRange>>();
 
         for local_range in stored_local {
@@ -235,6 +303,6 @@ impl Heartbeat {
             }
         }
 
-
+        Ok(())
     }
 }

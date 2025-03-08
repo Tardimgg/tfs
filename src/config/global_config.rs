@@ -31,7 +31,7 @@ impl ConfigKey {
     pub fn get_default_value(&self) -> String {
         match self {
             ConfigKey::LocationOfKeepersIps => "keepers".to_string(),
-            ConfigKey::ReplicationFactor => "2".to_string()
+            ConfigKey::ReplicationFactor => "3".to_string()
         }
     }
 }
@@ -61,7 +61,7 @@ impl GlobalConfig {
     pub async fn get_val_by_str(&self, key: &str) -> Option<String> {
         // добавить валидацию что key не пойдет куда не надо (config/qwe/../../home/data/secret)
 
-        self.dht.get(&format!("{CONFIG_PREFIX}{key}")).await.unwrap_or(None)
+        self.dht.get(&format!("{CONFIG_PREFIX}{key}")).await.unwrap_or(None).map(|v| v.0)
     }
 
     pub async fn get_val(&self, key: ConfigKey) -> String {
@@ -69,7 +69,7 @@ impl GlobalConfig {
             return v;
         }
         if let Ok(Some(v)) = self.dht.get(&format!("{CONFIG_PREFIX}{}", key.get_path())).await {
-            v
+            v.0
         } else {
             key.get_default_value()
         }

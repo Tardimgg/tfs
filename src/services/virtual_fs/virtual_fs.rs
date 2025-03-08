@@ -4,6 +4,7 @@ use std::error::Error;
 use std::fmt::Debug;
 use std::net::IpAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use actix_web::body::MessageBody;
 use actix_web::http::header::{ByteRangeSpec, Range};
 use actix_web::web;
@@ -13,9 +14,12 @@ use serde::Serialize;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc::Sender;
 use tokio_util::io::ReaderStream;
+use tryhard::retry_fn;
 use typed_builder::TypedBuilder;
 use crate::common::buffered_consumer::BufferedConsumer;
+use crate::common::default_error::DefaultError;
 use crate::common::file_range::{EndOfFileRange, FileRange};
+use crate::common::retry_police::fixed_backoff_with_jitter::FixedBackoffWithJitter;
 use crate::common::state_update::StateUpdate;
 use crate::config::global_config::{ConfigKey, GlobalConfig};
 use crate::services::dht_map::dht_map::DHTMap;
@@ -53,25 +57,34 @@ impl VirtualFS {
         instance
     }
 
-    pub async fn init(&self) {
+    pub async fn init(&self) -> Result<(), String> {
         let location_prefix = self.config.get_val(ConfigKey::LocationOfKeepersIps).await;
 
-        let mut new_keepers;
-        if let Ok(Some(current_keepers)) = self.dht_map.get(&location_prefix).await {
-            let mut keepers = serde_json::from_str::<Vec<DhtNodeId>>(&current_keepers).unwrap();
-            if !keepers.contains(&self.id) {
-                keepers.push(self.id);
+        retry_fn(|| async {
+            let mut new_keepers;
+            let mut seq = 0;
+            if let Ok(Some((current_keepers, record_seq))) = self.dht_map.get(&location_prefix).await {
+                let mut keepers = serde_json::from_str::<Vec<DhtNodeId>>(&current_keepers).unwrap();
+                if !keepers.contains(&self.id) {
+                    keepers.push(self.id);
+                } else {
+                    return Ok(());
+                }
+
+                seq = record_seq;
+                new_keepers = keepers;
+            } else {
+                new_keepers = vec![self.id];
             }
 
-            new_keepers = keepers;
-            println!("success init")
-        } else {
-            new_keepers = vec![self.id];
-        }
-
-        let new_keepers_str = serde_json::to_string(&new_keepers).unwrap();
-        let res = self.dht_map.put(&location_prefix, &new_keepers_str).await;
-        println!("success init {:?}", res)
+            let new_keepers_str = serde_json::to_string(&new_keepers).unwrap();
+            let res = self.dht_map.put_with_seq(&location_prefix, &new_keepers_str, seq).await;
+            println!("success init {:?}", res);
+            return res;
+        }).retries(3)
+            .custom_backoff(FixedBackoffWithJitter::new(Duration::from_secs(2), 30))
+            .await
+            .default_res()
     }
 
     pub fn get_id(&self) -> &DhtNodeId {
@@ -94,7 +107,7 @@ impl VirtualFS {
         if dht_info.is_none() {
             return Err(NodeMetaReceivingError::NotFound);
         }
-        let keepers: GlobalFileInfo = serde_json::from_str(&dht_info.unwrap()).unwrap();
+        let keepers: GlobalFileInfo = serde_json::from_str(&dht_info.unwrap().0).unwrap();
 
         Ok(keepers)
     }
@@ -102,7 +115,7 @@ impl VirtualFS {
     pub async fn get_all_keepers(&self) -> Result<Vec<DhtNodeId>, String> {
         let prefix = self.config.get_val(ConfigKey::LocationOfKeepersIps).await;
 
-        if let Ok(Some(keepers)) = self.dht_map.get(&prefix).await {
+        if let Ok(Some((keepers, seq))) = self.dht_map.get(&prefix).await {
             Ok(serde_json::from_str::<Vec<DhtNodeId>>(&keepers).unwrap().into())
         } else {
             Err("err".to_string())
@@ -139,7 +152,7 @@ impl VirtualFS {
         let prev_o = self.dht_map.get(path).await.map_err(|v| v.to_string())?;
 
         if let Some(prev) = prev_o {
-            let mut info = serde_json::from_str::<GlobalFileInfo>(&prev).map_err(|v| v.to_string())?;
+            let mut info = serde_json::from_str::<GlobalFileInfo>(&prev.0).map_err(|v| v.to_string())?;
 
             let mut first_record = true;
             for keeper in &mut info.keepers {
@@ -202,12 +215,12 @@ impl VirtualFS {
     pub async fn create_file(&self, path: &str, mut data: web::Payload) -> Result<FileMeta, FileSavingError> {
         // заборы про пути строим тут
 
-        self.storage.save(path, (0, EndOfFileRange::LastByte), ChunkVersion(0), FileStream::Payload(data.into())).await?;
+        let size = self.storage.save(path, (0, EndOfFileRange::LastByte), ChunkVersion(0), FileStream::Payload(data.into())).await?;
         self.state_updater.send(StateUpdate::NewFile(path.to_string())).await.unwrap();
 
         let range_info = StoredFileRange {
             from: 0,
-            to: StoredFileRangeEnd::EnfOfFile(u64::MAX),
+            to: StoredFileRangeEnd::EnfOfFile(size),
             version: 1,
         };
 

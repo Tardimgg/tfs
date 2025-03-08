@@ -46,6 +46,12 @@ async fn main() -> Result<(), AppError> {
     // vfs.getData(vfs.getPag(dht.getIps("string".to_string())))
     //
     // vfs.getData(vfs.getPag2(dht2.getIps("string".to_string())))
+    if let Ok(v) = env::var("RUSTFLAGS") {
+        if v.contains("tokio_unstable") {
+            // console_subscriber::init();
+        }
+    }
+
     let args: Vec<String> = env::args().collect();
     let port = args.get(1).map(|v| v.parse::<u16>().unwrap_or(8080)).unwrap_or(8080);
 

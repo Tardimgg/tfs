@@ -44,12 +44,12 @@ impl LocalStorage {
 #[async_trait(?Send)]
 // #[async_trait]
 impl FileStorage for LocalStorage {
-    async fn save(&self, path: &str, range: FileRange, version: ChunkVersion, mut data: FileStream) -> Result<(), FileSavingError> {
+    async fn save(&self, path: &str, range: FileRange, version: ChunkVersion, mut data: FileStream) -> Result<u64, FileSavingError> {
         let chunks_folder = self.filepath(path);
         let _ = tokio::fs::create_dir(&chunks_folder).await;
 
         let filepath = self.range_filepath(path, range, version);
-        let file = tokio::fs::File::create(filepath).await.map_err(|v| FileSavingError::AlreadyExist)?;
+        let file = tokio::fs::File::create(filepath.clone()).await.map_err(|v| FileSavingError::AlreadyExist)?;
         let mut writer = BufWriter::new(file);
 
         // writer.write_all_buf()
@@ -61,7 +61,8 @@ impl FileStorage for LocalStorage {
         }
         writer.flush().await.unwrap();
         writer.get_ref().sync_all().await.unwrap();
-        Ok(())
+
+        Ok(writer.get_ref().metadata().await.unwrap().len())
         // file.write_all_buf(&mut data);
         // tokio::fs::write("my_file.bin", data)
     }
@@ -164,7 +165,7 @@ impl FileStorage for LocalStorage {
         let chunks_folder = self.filepath(path);
         let mut meta = Vec::new();
 
-        let mut exist_files = tokio::fs::read_dir(&chunks_folder).await.unwrap();
+        let mut exist_files = tokio::fs::read_dir(&chunks_folder).await.map_err(|v| FileReadingError::NotExist)?;
         while let Ok(Some(file)) = exist_files.next_entry().await {
             if let Some(filename) =  file.file_name().to_str() {
                 if let Ok(chunk_filename) = ChunkFilename::try_from(filename) {

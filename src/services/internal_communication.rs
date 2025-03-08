@@ -6,6 +6,7 @@ use awc::Client;
 use reqwest::StatusCode;
 use tryhard::retry_fn;
 use crate::client;
+use crate::common::default_error::DefaultError;
 use crate::common::retry_police::fixed_backoff_with_jitter::FixedBackoffWithJitter;
 use crate::common::retry_police::linear_backoff_with_jitter::LinearBackoffWithJitter;
 use crate::services::dht_map::model::DhtNodeId;
@@ -19,7 +20,7 @@ pub struct InternalCommunication {
 
 impl InternalCommunication {
 
-    pub async fn send_file(&self, filename: &str, node: DhtNodeId, file: FileStream, range: Range) {
+    pub async fn send_file(&self, filename: &str, node: DhtNodeId, file: FileStream, range: Range) -> Result<(), String> {
         // self.client.put(format!("http://{}:{}/virtual_fs/file/{}", node.ip, node.port, filename))
         //     .insert_header(range)
         //     .send_stream(file.get_stream())
@@ -35,8 +36,8 @@ impl InternalCommunication {
             .body(reqwest::Body::wrap_stream(stream))
             .send()
             .await
-            .unwrap();
-
+            .map(|v| ())
+            .default_res()
     }
 
     pub async fn get_stored_parts_of_file(&self, filename: &str, node: DhtNodeId) -> Result<Vec<StoredFileRange>, String> { // видимо нужный какой то общий FileRange

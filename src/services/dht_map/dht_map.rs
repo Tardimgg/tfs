@@ -67,7 +67,7 @@ impl DHTMap {
         }
     }
 
-    async fn put_impl(&self, key: &str, value: &str) -> Result<(), DhtPutError> {
+    async fn put_impl(&self, key: &str, value: &str, seq: Option<i64>) -> Result<(), DhtPutError> {
         let dht_item = self.get_mainline_dht_item(key).await?;
         if let Some(record) = dht_item {
             let mut dht_record = DhtRecord::try_from(record.clone())?;
@@ -76,7 +76,7 @@ impl DHTMap {
             if let Some(prev_v) = exist {
                 prev_v.value = value.to_string();
 
-                self.put_in_dht(key, &dht_record, record.seq() + 1, Some(*record.seq())).await?;
+                // self.put_in_dht(key, &dht_record, record.seq() + 1, Some(*record.seq())).await?;
 
             } else {
                 dht_record.pairs.push(DistributedMapVal {
@@ -84,14 +84,16 @@ impl DHTMap {
                     value: value.to_string(),
                 });
 
-                self.put_in_dht(key, &dht_record, record.seq() + 1, Some(*record.seq())).await?;
+                // self.put_in_dht(key, &dht_record, record.seq() + 1, Some(*record.seq())).await?;
             }
+            let prev_seq = seq.unwrap_or(*record.seq());
+            self.put_in_dht(key, &dht_record, prev_seq + 1, Some(prev_seq)).await?;
         } else {
             let record = DhtRecord {
                 pairs: vec![DistributedMapVal { key: key.to_string(), value: value.to_string() }]
             };
 
-            self.put_in_dht(key, &record, 0, None).await?;
+            self.put_in_dht(key, &record, seq.unwrap_or(0), None).await?;
         }
 
         return Ok(());
@@ -122,13 +124,20 @@ impl DHTMap {
     }
 
     pub async fn put(&self, key: &str, value: &str) -> Result<(), DhtPutError> {
-        retry_fn(|| self.put_impl(key, value))
+        retry_fn(|| self.put_impl(key, value, None))
             .retries(3)
             .custom_backoff(FixedBackoffWithJitter::new(Duration::from_secs(2), 50))
             .await
     }
 
-    pub async fn get(&self, key: &str) -> Result<Option<String>, DhtGetError> {
+    pub async fn put_with_seq(&self, key: &str, value: &str, cas: i64) -> Result<(), DhtPutError> {
+        retry_fn(|| self.put_impl(key, value, Some(cas)))
+            .retries(3)
+            .custom_backoff(FixedBackoffWithJitter::new(Duration::from_secs(2), 50))
+            .await
+    }
+
+    pub async fn get(&self, key: &str) -> Result<Option<(String, i64)>, DhtGetError> {
 
         // let (tx, rx): (Sender<i32>, Receiver<i32>) = flume::unbounded();
         // let (tx1, rx1) = flume::unbounded();
@@ -142,15 +151,18 @@ impl DHTMap {
         let dht_items = self.get_mainline_dht_item(key)
             .await?;
 
-        let record: Option<Result<DhtRecord, serde_json::Error>> = dht_items
-            .map(|v| v.try_into());
+        let record: Option<(Result<DhtRecord, serde_json::Error>, i64)> = dht_items
+            .map(|v| {
+                let seq = *v.seq();
+                (v.try_into(), seq)
+            });
 
         let mut versions = Vec::new();
-        if let Some(pairs_result) = record {
+        if let Some((pairs_result, seq)) = record {
             if let Ok(pairs) = pairs_result {
                 for pair in pairs.pairs {
                     if pair.key == key {
-                        versions.push(pair.value)
+                        versions.push((pair.value, seq))
                     }
                 }
             } else {

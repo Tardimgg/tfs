@@ -68,7 +68,7 @@ async fn get_file(file_path: web::Path<String>, req: HttpRequest, fs: web::Data<
     // кажется поддержки возврата несколких чанков нет даже в NamedFile => нужно реализовать свою структуру,
     // которая будет собирать чанки вместе и между ними писать нужную мету
     // https://github.com/actix/actix-web/pull/227
-    // https://github.com/actix/actix-web/issues/60
+    // https://github.com/actix/actix-web/issues/60z`
 
     let mut file_o = fs.get_ref().get_file_content(&file_path, range_o).await?;
     if let Some(file) = file_o {

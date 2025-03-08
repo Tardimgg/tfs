@@ -45,7 +45,7 @@ impl FileStream {
 #[async_trait(?Send)]
 pub trait FileStorage {
 // нужно как то построить заборы над путями, может же придти совсем рандомный путь куда угодно
-    async fn save(&self, path: &str, range: FileRange, version: ChunkVersion, data: FileStream) -> Result<(), FileSavingError>;
+    async fn save(&self, path: &str, range: FileRange, version: ChunkVersion, data: FileStream) -> Result<u64, FileSavingError>;
     // нужно научится хранить id версии хранимого куска
     async fn get_file<'a>(&self, path: &str, ranges: Option<&'a [FileRange]>, max_version: Option<ChunkVersion>) -> Result<Vec<(FileRange, FileStream)>, FileReadingError>;
     async fn get_file_meta(&self, path: &str) -> Result<Vec<StoredFileRange>, FileReadingError>;
