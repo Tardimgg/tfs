@@ -9,7 +9,7 @@ use actix_files::NamedFile;
 use actix_multipart::form::{MultipartCollect, MultipartForm};
 use actix_multipart::form::tempfile::TempFile;
 use actix_multipart::Multipart;
-use actix_web::{get, HttpRequest, HttpResponse, post, Responder, ResponseError, Scope, web};
+use actix_web::{get, HttpRequest, HttpResponse, post, Responder, ResponseError, Scope, web, put};
 use actix_web::error::HttpError;
 use actix_web::http::header::{HeaderName, Range};
 use actix_web::web::{BufMut, Bytes, Json};
@@ -56,19 +56,14 @@ async fn get_stored_parts(filepath: web::Path<String>, req: HttpRequest, fs: web
 async fn get_file(file_path: web::Path<String>, req: HttpRequest, fs: web::Data<Arc<VirtualFS>>) -> Result<impl Responder, ApiException> {
 
     let range_header_o = req.headers().get(actix_web::http::header::RANGE);
-    let range_o = if let Some(range_header) = range_header_o {
-        let range_string = range_header.to_str().map_err(|v| ApiException::BadRequest)?;
-        Some(Range::from_str(range_string).map_err(|v| ApiException::BadRequest)?)
-    } else {
-        None
-    };
+    let range_o = parse_range_header(&req)?;
 
     // let file = actix_files::NamedFile::open_async("/home/oop/RustroverProjects/tfs/root/asd/chunks/ALL_v0").await.unwrap();
     // return Ok(file)
     // кажется поддержки возврата несколких чанков нет даже в NamedFile => нужно реализовать свою структуру,
     // которая будет собирать чанки вместе и между ними писать нужную мету
     // https://github.com/actix/actix-web/pull/227
-    // https://github.com/actix/actix-web/issues/60z`
+    // https://github.com/actix/actix-web/issues/60
 
     let mut file_o = fs.get_ref().get_file_content(&file_path, range_o).await?;
     if let Some(file) = file_o {
@@ -79,9 +74,37 @@ async fn get_file(file_path: web::Path<String>, req: HttpRequest, fs: web::Data<
 }
 
 #[post("/file/{tail:.*}")]
-async fn create_file(filename: web::Path<String>, mut payload: web::Payload, fs: web::Data<Arc<VirtualFS>>) -> Result<Json<FileMeta>, ApiException> {
-    let mut meta =  fs.get_ref().create_file(&filename, payload).await;
+async fn create_file(filename: web::Path<String>, payload: web::Payload, req: HttpRequest, fs: web::Data<Arc<VirtualFS>>) -> Result<Json<FileMeta>, ApiException> {
+    let range = parse_range_header(&req)?;
+
+    let meta =  fs.get_ref().put_file(&filename, payload, range).await?;
     Ok(web::Json(FileMeta::builder().name(filename.to_string()).node_type(NodeType::File).build()))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SaveExistingRequest {
+    version: u64,
+}
+
+#[put("/file/{tail:.*}")]
+async fn save_existing_chunk(filename: web::Path<String>, payload: web::Payload, req: HttpRequest,
+                             version: web::Query<SaveExistingRequest>,
+                             fs: web::Data<Arc<VirtualFS>>) -> Result<Json<FileMeta>, ApiException> {
+    let range = parse_range_header(&req)?;
+
+    let meta =  fs.get_ref().save_existing_chunk(&filename, payload, range, version.version).await?;
+    Ok(web::Json(FileMeta::builder().name(filename.to_string()).node_type(NodeType::File).build()))
+}
+
+fn parse_range_header(req: &HttpRequest) -> Result<Option<Range>, ApiException> {
+    let range_header_o = req.headers().get(actix_web::http::header::RANGE);
+    if let Some(range_header) = range_header_o {
+        let range_string = range_header.to_str().map_err(|v| ApiException::BadRequest)?;
+        Ok(Some(Range::from_str(range_string).map_err(|v| ApiException::BadRequest)?))
+    } else {
+        Ok(None)
+    }
+
 }
 
 pub fn config() -> Scope {
@@ -93,4 +116,5 @@ pub fn config() -> Scope {
         .service(get_stored_parts)
         .service(get_file_meta)
         .service(create_file)
+        .service(save_existing_chunk)
 }

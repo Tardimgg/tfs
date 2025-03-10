@@ -1,22 +1,35 @@
 use crate::common::file_range::EndOfFileRange;
 use crate::services::virtual_fs::models::StoredFileRangeEnd;
 
+
 #[derive(Copy, Clone)]
-pub enum RangeEvent {
+pub struct RangeEvent {
+    pub chunk_version: u64,
+    pub event: RangeEventType
+}
+
+impl RangeEvent {
+    pub fn new(chunk_version: u64, event: RangeEventType) -> Self {
+        Self { chunk_version, event }
+    }
+}
+
+#[derive(Copy, Clone)]
+pub enum RangeEventType {
     Start(u64),
     End(u64),
     StoredStart(u64, usize),
     StoredEnd(StoredFileRangeEnd, usize)
 }
 
-impl RangeEvent {
+impl RangeEventType {
 
     pub fn get_index(&self) -> (u64, u8) {
         match self {
-            RangeEvent::Start(v) => (*v, 0),
-            RangeEvent::End(v) => (*v, 3),
-            RangeEvent::StoredStart(v, _) => (*v, 1),
-            RangeEvent::StoredEnd(v, _) => {
+            RangeEventType::Start(v) => (*v, 0),
+            RangeEventType::End(v) => (*v, 3),
+            RangeEventType::StoredStart(v, _) => (*v, 1),
+            RangeEventType::StoredEnd(v, _) => {
                 match v {
                     StoredFileRangeEnd::EnfOfFile(v) => (*v, 2),
                     StoredFileRangeEnd::EndOfRange(v) => (*v, 2)

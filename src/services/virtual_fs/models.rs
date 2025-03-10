@@ -26,7 +26,8 @@ impl StoredFileRangeEnd {
 pub struct StoredFileRange {
     pub from: u64,
     pub to: StoredFileRangeEnd,
-    pub version: u64 // возможно сходить в узел и проверить как он поживает и что на самом деле хранит имеет смысл
+    pub version: u64, // возможно сходить в узел и проверить как он поживает и что на самом деле хранит имеет смысл
+    pub is_keeper: bool
 }
 
 impl From<StoredFileRange> for FileRange {

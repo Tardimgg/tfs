@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use tryhard::retry_fn;
 use crate::common::retry_police::fixed_backoff_with_jitter::FixedBackoffWithJitter;
 use crate::services::dht_map::error::{CreateError, DhtGetError, KeyError, DhtPutError};
+use crate::services::dht_map::model::PrevSeq;
 
 pub struct DHTMap {
     dht: AsyncDht,
@@ -67,7 +68,7 @@ impl DHTMap {
         }
     }
 
-    async fn put_impl(&self, key: &str, value: &str, seq: Option<i64>) -> Result<(), DhtPutError> {
+    async fn put_impl(&self, key: &str, value: &str, prev_seq: PrevSeq) -> Result<(), DhtPutError> {
         let dht_item = self.get_mainline_dht_item(key).await?;
         if let Some(record) = dht_item {
             let mut dht_record = DhtRecord::try_from(record.clone())?;
@@ -86,14 +87,28 @@ impl DHTMap {
 
                 // self.put_in_dht(key, &dht_record, record.seq() + 1, Some(*record.seq())).await?;
             }
-            let prev_seq = seq.unwrap_or(*record.seq());
-            self.put_in_dht(key, &dht_record, prev_seq + 1, Some(prev_seq)).await?;
+            match prev_seq {
+                PrevSeq::Any => {
+                    self.put_in_dht(key, &dht_record, *record.seq() + 1, Some(*record.seq())).await?;
+                }
+                PrevSeq::Seq(seq) => {
+                    self.put_in_dht(key, &dht_record, seq.map(|v| v + 1).unwrap_or(0), seq).await?;
+                }
+            }
+
         } else {
             let record = DhtRecord {
                 pairs: vec![DistributedMapVal { key: key.to_string(), value: value.to_string() }]
             };
 
-            self.put_in_dht(key, &record, seq.unwrap_or(0), None).await?;
+            match prev_seq {
+                PrevSeq::Any => {
+                    self.put_in_dht(key, &record, 0, None).await?;
+                }
+                PrevSeq::Seq(seq) => {
+                    self.put_in_dht(key, &record, seq.map(|v| v + 1).unwrap_or(0), seq).await?;
+                }
+            }
         }
 
         return Ok(());
@@ -124,14 +139,14 @@ impl DHTMap {
     }
 
     pub async fn put(&self, key: &str, value: &str) -> Result<(), DhtPutError> {
-        retry_fn(|| self.put_impl(key, value, None))
+        retry_fn(|| self.put_impl(key, value, PrevSeq::Any))
             .retries(3)
             .custom_backoff(FixedBackoffWithJitter::new(Duration::from_secs(2), 50))
             .await
     }
 
-    pub async fn put_with_seq(&self, key: &str, value: &str, cas: i64) -> Result<(), DhtPutError> {
-        retry_fn(|| self.put_impl(key, value, Some(cas)))
+    pub async fn put_with_seq(&self, key: &str, value: &str, prev_seq: PrevSeq) -> Result<(), DhtPutError> {
+        retry_fn(|| self.put_impl(key, value, prev_seq))
             .retries(3)
             .custom_backoff(FixedBackoffWithJitter::new(Duration::from_secs(2), 50))
             .await

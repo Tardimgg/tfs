@@ -7,3 +7,9 @@ pub struct DhtNodeId {
     pub ip: IpAddr,
     pub port: u16
 }
+
+#[derive(Copy, Clone)]
+pub enum PrevSeq {
+    Any,
+    Seq(Option<i64>)
+}

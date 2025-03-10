@@ -67,7 +67,18 @@ impl From<FileSavingError> for ApiException {
     fn from(value: FileSavingError) -> Self {
         match value {
             FileSavingError::AlreadyExist => FileAlreadyExist,
-            FileSavingError::Other(v) => InternalError(v)
+            FileSavingError::Other(v) => InternalError(v),
+            FileSavingError::InvalidRange => BadRequest
+        }
+    }
+}
+
+impl From<ChunkSavingExistingError> for ApiException {
+    fn from(value: ChunkSavingExistingError) -> Self {
+        match value {
+            ChunkSavingExistingError::NotExist => FileNotFound,
+            ChunkSavingExistingError::SavingError(v) => v.into(),
+            ChunkSavingExistingError::Other(v) => InternalError(v)
         }
     }
 }

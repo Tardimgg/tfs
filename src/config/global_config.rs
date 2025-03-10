@@ -31,7 +31,7 @@ impl ConfigKey {
     pub fn get_default_value(&self) -> String {
         match self {
             ConfigKey::LocationOfKeepersIps => "keepers".to_string(),
-            ConfigKey::ReplicationFactor => "3".to_string()
+            ConfigKey::ReplicationFactor => "2".to_string()
         }
     }
 }

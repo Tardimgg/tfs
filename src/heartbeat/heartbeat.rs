@@ -17,9 +17,9 @@ use crate::common::file_range::{EndOfFileRange, FileRange};
 use crate::common::state_update::StateUpdate;
 use crate::config::global_config::{ConfigKey, GlobalConfig};
 use crate::heartbeat::errors::UpdateDhtError;
-use crate::heartbeat::models::RangeEvent;
+use crate::heartbeat::models::{RangeEvent, RangeEventType};
 use crate::services::dht_map::dht_map::DHTMap;
-use crate::services::dht_map::model::DhtNodeId;
+use crate::services::dht_map::model::{DhtNodeId, PrevSeq};
 use crate::services::file_storage::errors::FileReadingError;
 use crate::services::file_storage::file_storage::FileStorage;
 use crate::services::file_storage::model::{ChunkVersion, NodeType};
@@ -132,8 +132,11 @@ impl Heartbeat {
                                 // impl check equals stored and dht data
 
                                 for stored_range in &keeper.ranges {
-                                    events.push(RangeEvent::Start(stored_range.from));
-                                    events.push(RangeEvent::End(stored_range.to.get_index()));
+                                    if !stored_range.is_keeper {
+                                        continue;
+                                    }
+                                    events.push(RangeEvent::new(stored_range.version, RangeEventType::Start(stored_range.from)));
+                                    events.push(RangeEvent::new(stored_range.version, RangeEventType::End(stored_range.to.get_index())));
                                 }
                             } else {
                                 println!("impl remove from dht")
@@ -174,36 +177,36 @@ impl Heartbeat {
                 };
                 for i in (0..local_chunks.len()) {
                     let chunk = local_chunks[i];
-                    events.push(RangeEvent::StoredStart(chunk.from, i));
-                    events.push(RangeEvent::StoredEnd(chunk.to, i))
+                    events.push(RangeEvent::new(chunk.version, RangeEventType::StoredStart(chunk.from, i)));
+                    events.push(RangeEvent::new(chunk.version, RangeEventType::StoredEnd(chunk.to, i)));
                 }
 
-                events.sort_by_key(|k| k.get_index());
+                events.sort_by_key(|k| k.event.get_index());
 
-                let mut num_of_copies = 0;
+                let mut num_of_copies = HashMap::new();;
                 let mut bad_segments = HashSet::new();
                 let mut stored = HashSet::new();
                 for event in events {
-                    match event {
-                        RangeEvent::Start(v) => num_of_copies += 1,
-                        RangeEvent::End(v) => {
-                            num_of_copies -= 1;
-                            if num_of_copies < replication_factor {
+                    match event.event {
+                        RangeEventType::Start(v) => *num_of_copies.entry(event.chunk_version).or_insert(0) += 1,
+                        RangeEventType::End(v) => {
+                            *num_of_copies.get_mut(&event.chunk_version).unwrap() -= 1;
+                            if *num_of_copies.get(&event.chunk_version).unwrap_or(&0) < replication_factor {
                                 for segment in &stored {
                                     bad_segments.insert(*segment);
                                 }
                                 stored.clear();
                             }
                         },
-                        RangeEvent::StoredStart(v, index) => {
+                        RangeEventType::StoredStart(v, index) => {
                             stored.insert(index);
-                            if num_of_copies < replication_factor {
+                            if *num_of_copies.get(&event.chunk_version).unwrap_or(&0) < replication_factor {
                                 bad_segments.insert(index);
                             }
                         }
-                        RangeEvent::StoredEnd(v, index) => {
+                        RangeEventType::StoredEnd(v, index) => {
                             stored.remove(&index);
-                            if num_of_copies < replication_factor {
+                            if *num_of_copies.get(&event.chunk_version).unwrap_or(&0) < replication_factor {
                                 bad_segments.insert(index);
                             }
                         }
@@ -232,9 +235,19 @@ impl Heartbeat {
                         let already_stored_o = CLIENT.take().get_stored_parts_of_file(path.key(), keeper).await;
                         checked.insert(keeper);
                         if let Ok(already_stored) = already_stored_o {
-                            println!("already stored file {}: {:?}", path.key(), already_stored);
-                            if already_stored.contains(&segment) {
-                                continue;
+                            let target_version = local_chunks[i].version;
+                            let mut stored: Vec<(u64, u64)> = already_stored.iter()
+                                .filter(|v| v.version == target_version)
+                                .map(|v| (v.from, v.to.get_index()))
+                                .collect();
+
+                            let target_range = (local_chunks[i].from, local_chunks[i].to.get_index());
+                            if is_range_covered(target_range, &mut stored) {
+                                println!("already stored file {}: {:?}", path.key(), already_stored);
+                            } else {
+                                println!("already stored {} : not all", path.key());
+                                new_keeper = Some(keeper);
+                                break;
                             }
                         } else {
                             println!("already stored {} : None", path.key());
@@ -262,8 +275,8 @@ impl Heartbeat {
                     println!("send file {} with range {} {:?}", path.key(), segment.from, segment.to);
                     if let Err(e) = CLIENT.take().send_file(path.key(), new_keeper,
                                             file.swap_remove(0).1,
-                                            Range::Bytes(vec![range])).await {
-                        println!("errow while send file {} to {:?}", path.key(), new_keeper);
+                                            Range::Bytes(vec![range]), segment.version).await {
+                        println!("errow while send file {} to {:?}. err: {}", path.key(), new_keeper, e);
                     }
                 }
             }
@@ -284,7 +297,10 @@ impl Heartbeat {
                 });
             }
         };
-        let mut dht_chunks = dht_state.iter().map(|v| *v).collect::<HashSet<StoredFileRange>>();
+        let mut dht_chunks = dht_state.iter()
+            .map(|v| *v)
+            .filter(|v| v.is_keeper)
+            .collect::<HashSet<StoredFileRange>>();
 
         for local_range in stored_local {
             if !dht_chunks.contains(&local_range) {
@@ -297,7 +313,7 @@ impl Heartbeat {
 
         println!("state update: file: {} delete {:?}, add: {:?}", filename, to_delete, to_add_to_dht);
         if to_delete.len() != 0 || to_add_to_dht.len() != 0 {
-            let res = self.fs.update_state(filename, &to_add_to_dht.iter().map(|v| *v).collect(), &to_delete).await;
+            let res = self.fs.update_state(filename, &to_add_to_dht.iter().map(|v| *v).collect(), &to_delete, PrevSeq::Any).await;
             if let Err(err) = res {
                 println!("err: {}", err.to_string());
             }
@@ -305,4 +321,20 @@ impl Heartbeat {
 
         Ok(())
     }
+}
+
+fn is_range_covered(range: (u64, u64), others: &mut [(u64, u64)]) -> bool {
+    // тут по факту нужно провести ту же работу что уже провели выщи, то есть по ивентам понять покрыт ли диапазон
+    // так что нужно как то вынести данную функицю в отдельный метод
+    others.sort_by_key(|v| v.0);
+
+    for other in others {
+        if range.1 < other.0 || range.0 > other.1 {
+            continue
+        } else {
+            return true;
+        }
+    }
+
+    false
 }

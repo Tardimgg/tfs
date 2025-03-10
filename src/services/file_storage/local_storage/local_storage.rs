@@ -5,6 +5,7 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use actix_web::ResponseError;
 use async_trait::async_trait;
+use bytes::Bytes;
 use futures::StreamExt;
 use tokio::io::{AsyncWriteExt, BufReader, BufWriter};
 use tokio_util::io::{ReaderStream, StreamReader};
@@ -53,16 +54,43 @@ impl FileStorage for LocalStorage {
         let mut writer = BufWriter::new(file);
 
         // writer.write_all_buf()
+        let mut real_size = 0;
         while let Some(item) = data.next().await {
             // data.extend_from_slice(&item?);
             // println!("{:?}", item)
             // writer.write_all(format!("{:?}", item).as_str().as_bytes()).await;
-            writer.write_all(item.unwrap().as_ref()).await.unwrap();
-        }
-        writer.flush().await.unwrap();
-        writer.get_ref().sync_all().await.unwrap();
+            match item {
+                Ok(bytes) => {
+                    real_size += bytes.len();
+                    writer.write_all(bytes.as_ref()).await.unwrap();
+                }
+                Err(error) => {
+                    writer.flush().await.err().iter()
+                        .for_each(|e| println!("error when flush the file({}): {}", path, e.to_string()));
+                    writer.get_ref().sync_all().await.err().iter()
+                        .for_each(|e| println!("error when sync_all() the file(){}: {}", path, e.to_string()));
 
-        Ok(writer.get_ref().metadata().await.unwrap().len())
+                    // переделать на записы в /temp и потом проверку необходимости удаления
+                    if let Err(e) = tokio::fs::remove_file(filepath).await {
+                        println!("file deletion error following a reading error. Error {}", e.to_string())
+                    }
+                    return Err(FileSavingError::Other(error.to_string()));
+                }
+            }
+
+        }
+        writer.flush().await.err().iter()
+            .for_each(|e| println!("error when flush the file({}): {}", path, e.to_string()));
+        writer.get_ref().sync_all().await.err().iter()
+            .for_each(|e| println!("error when sync_all() the file(){}: {}", path, e.to_string()));
+
+        if let EndOfFileRange::ByteIndex(last_byte) =  range.1 {
+            if last_byte - range.0 + 1 != real_size as u64 {
+                return Err(FileSavingError::InvalidRange);
+            }
+        }
+        // Ok(writer.get_ref().metadata().await.unwrap().len())
+        Ok(real_size as u64)
         // file.write_all_buf(&mut data);
         // tokio::fs::write("my_file.bin", data)
     }
@@ -186,6 +214,7 @@ impl FileStorage for LocalStorage {
                         from: *chunk_filename.get_start(),
                         to: end,
                         version: chunk_version.0,
+                        is_keeper: true
                     };
                     // meta.push((*chunk_version, (*chunk_filename.get_start(), end)));
                     meta.push(stored_range);

@@ -3,7 +3,9 @@ use std::fmt::format;
 use std::time::Duration;
 use actix_web::http::header::Range;
 use awc::Client;
+use reqwest::header::RANGE;
 use reqwest::StatusCode;
+use serde::{Deserialize, Serialize};
 use tryhard::retry_fn;
 use crate::client;
 use crate::common::default_error::DefaultError;
@@ -18,9 +20,14 @@ pub struct InternalCommunication {
     client: reqwest::Client
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct SaveExistingRequest {
+    version: u64,
+}
+
 impl InternalCommunication {
 
-    pub async fn send_file(&self, filename: &str, node: DhtNodeId, file: FileStream, range: Range) -> Result<(), String> {
+    pub async fn send_file(&self, filename: &str, node: DhtNodeId, file: FileStream, range: Range, version: u64) -> Result<(), String> {
         // self.client.put(format!("http://{}:{}/virtual_fs/file/{}", node.ip, node.port, filename))
         //     .insert_header(range)
         //     .send_stream(file.get_stream())
@@ -31,13 +38,20 @@ impl InternalCommunication {
             FileStream::TokioFile(s) => s
         };
 
-        self.client.post(format!("http://{}:{}/virtual_fs/file/{}", node.ip, node.port, filename))
-            // .header(reqwest::range)
+        let response = self.client.put(format!("http://{}:{}/virtual_fs/file/{}", node.ip, node.port, filename))
+        // let response = self.client.post(format!("http://{}:{}/virtual_fs/file/{}", node.ip, node.port, filename))
+            .header(RANGE, range.to_string())
             .body(reqwest::Body::wrap_stream(stream))
+            .query(&SaveExistingRequest { version })
             .send()
             .await
-            .map(|v| ())
-            .default_res()
+            .default_res()?;
+
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(format!("status = {}. text = {}", response.status(), response.text().await.unwrap_or("".to_string())))
+        }
     }
 
     pub async fn get_stored_parts_of_file(&self, filename: &str, node: DhtNodeId) -> Result<Vec<StoredFileRange>, String> { // видимо нужный какой то общий FileRange
