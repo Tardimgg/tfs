@@ -9,7 +9,7 @@ use actix_files::NamedFile;
 use actix_multipart::form::{MultipartCollect, MultipartForm};
 use actix_multipart::form::tempfile::TempFile;
 use actix_multipart::Multipart;
-use actix_web::{get, HttpRequest, HttpResponse, post, Responder, ResponseError, Scope, web, put};
+use actix_web::{get, HttpRequest, HttpResponse, post, Responder, ResponseError, Scope, web, put, patch};
 use actix_web::error::HttpError;
 use actix_web::http::header::{HeaderName, Range};
 use actix_web::web::{BufMut, Bytes, Json};
@@ -73,8 +73,14 @@ async fn get_file(file_path: web::Path<String>, req: HttpRequest, fs: web::Data<
     Ok(HttpResponse::NotFound().into())
 }
 
-#[post("/file/{tail:.*}")]
+#[put("/file/{tail:.*}")]
 async fn create_file(filename: web::Path<String>, payload: web::Payload, req: HttpRequest, fs: web::Data<Arc<VirtualFS>>) -> Result<Json<FileMeta>, ApiException> {
+    let meta =  fs.get_ref().put_file(&filename, payload, None).await?;
+    Ok(web::Json(FileMeta::builder().name(filename.to_string()).node_type(NodeType::File).build()))
+}
+
+#[patch("/file/{tail:.*}")]
+async fn patch_file(filename: web::Path<String>, payload: web::Payload, req: HttpRequest, fs: web::Data<Arc<VirtualFS>>) -> Result<Json<FileMeta>, ApiException> {
     let range = parse_range_header(&req)?;
 
     let meta =  fs.get_ref().put_file(&filename, payload, range).await?;
@@ -86,7 +92,7 @@ pub struct SaveExistingRequest {
     version: u64,
 }
 
-#[put("/file/{tail:.*}")]
+#[post("/file/{tail:.*}")]
 async fn save_existing_chunk(filename: web::Path<String>, payload: web::Payload, req: HttpRequest,
                              version: web::Query<SaveExistingRequest>,
                              fs: web::Data<Arc<VirtualFS>>) -> Result<Json<FileMeta>, ApiException> {

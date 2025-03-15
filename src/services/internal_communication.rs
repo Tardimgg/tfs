@@ -38,8 +38,8 @@ impl InternalCommunication {
             FileStream::TokioFile(s) => s
         };
 
-        let response = self.client.put(format!("http://{}:{}/virtual_fs/file/{}", node.ip, node.port, filename))
-        // let response = self.client.post(format!("http://{}:{}/virtual_fs/file/{}", node.ip, node.port, filename))
+        // let response = self.client.put(format!("http://{}:{}/virtual_fs/file/{}", node.ip, node.port, filename))
+        let response = self.client.post(format!("http://{}:{}/virtual_fs/file/{}", node.ip, node.port, filename))
             .header(RANGE, range.to_string())
             .body(reqwest::Body::wrap_stream(stream))
             .query(&SaveExistingRequest { version })

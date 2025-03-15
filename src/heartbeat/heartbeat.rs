@@ -111,7 +111,7 @@ impl Heartbeat {
         println!("keepers: {:?}", keepers_result);
 
         // минус один нужно перенести в более подходящее место
-        let replication_factor = usize::from_str(&self.config.get_val(ConfigKey::ReplicationFactor).await).unwrap() - 1; // себя не считаем
+        let replication_factor = u32::from_str(&self.config.get_val(ConfigKey::ReplicationFactor).await).unwrap() - 1; // себя не считаем
         if let Ok(keepers) = keepers_result {
             if keepers.len() == 0 {
                 return Ok(());
@@ -181,37 +181,7 @@ impl Heartbeat {
                     events.push(RangeEvent::new(chunk.version, RangeEventType::StoredEnd(chunk.to, i)));
                 }
 
-                events.sort_by_key(|k| k.event.get_index());
-
-                let mut num_of_copies = HashMap::new();;
-                let mut bad_segments = HashSet::new();
-                let mut stored = HashSet::new();
-                for event in events {
-                    match event.event {
-                        RangeEventType::Start(v) => *num_of_copies.entry(event.chunk_version).or_insert(0) += 1,
-                        RangeEventType::End(v) => {
-                            *num_of_copies.get_mut(&event.chunk_version).unwrap() -= 1;
-                            if *num_of_copies.get(&event.chunk_version).unwrap_or(&0) < replication_factor {
-                                for segment in &stored {
-                                    bad_segments.insert(*segment);
-                                }
-                                stored.clear();
-                            }
-                        },
-                        RangeEventType::StoredStart(v, index) => {
-                            stored.insert(index);
-                            if *num_of_copies.get(&event.chunk_version).unwrap_or(&0) < replication_factor {
-                                bad_segments.insert(index);
-                            }
-                        }
-                        RangeEventType::StoredEnd(v, index) => {
-                            stored.remove(&index);
-                            if *num_of_copies.get(&event.chunk_version).unwrap_or(&0) < replication_factor {
-                                bad_segments.insert(index);
-                            }
-                        }
-                    }
-                }
+                let bad_segments = get_under_replicated_segments(&mut events, replication_factor);
 
                 for i in bad_segments {
                     // все ещё нужно реализовать проверку что реплицируешь именно ты, с каким то таймаутом ожидания, после которого реплицирует кто то другой
@@ -236,13 +206,22 @@ impl Heartbeat {
                         checked.insert(keeper);
                         if let Ok(already_stored) = already_stored_o {
                             let target_version = local_chunks[i].version;
-                            let mut stored: Vec<(u64, u64)> = already_stored.iter()
+                            let mut events: Vec<RangeEvent> = already_stored.iter()
                                 .filter(|v| v.version == target_version)
-                                .map(|v| (v.from, v.to.get_index()))
+                                .flat_map(|v| vec![
+                                        RangeEvent::new(v.version, RangeEventType::Start(v.from)),
+                                        RangeEvent::new(v.version, RangeEventType::End(v.to.get_index()))
+                                    ].into_iter()
+                                )
                                 .collect();
 
-                            let target_range = (local_chunks[i].from, local_chunks[i].to.get_index());
-                            if is_range_covered(target_range, &mut stored) {
+                            events.extend(vec![
+                                RangeEvent::new(target_version, RangeEventType::StoredStart(local_chunks[i].from, 0)),
+                                RangeEvent::new(target_version, RangeEventType::StoredEnd(local_chunks[i].to, 0))
+                            ]);
+
+                            let is_covered = get_under_replicated_segments(&mut events, replication_factor).is_empty();
+                            if is_covered {
                                 println!("already stored file {}: {:?}", path.key(), already_stored);
                             } else {
                                 println!("already stored {} : not all", path.key());
@@ -272,7 +251,7 @@ impl Heartbeat {
                         StoredFileRangeEnd::EndOfRange(last) => ByteRangeSpec::FromTo(segment.from, last),
                         StoredFileRangeEnd::EnfOfFile(_) =>  ByteRangeSpec::From(segment.from)
                     };
-                    println!("send file {} with range {} {:?}", path.key(), segment.from, segment.to);
+                    println!("send file {} with range {} {:?} v{}", path.key(), segment.from, segment.to, segment.version);
                     if let Err(e) = CLIENT.take().send_file(path.key(), new_keeper,
                                             file.swap_remove(0).1,
                                             Range::Bytes(vec![range]), segment.version).await {
@@ -323,18 +302,37 @@ impl Heartbeat {
     }
 }
 
-fn is_range_covered(range: (u64, u64), others: &mut [(u64, u64)]) -> bool {
-    // тут по факту нужно провести ту же работу что уже провели выщи, то есть по ивентам понять покрыт ли диапазон
-    // так что нужно как то вынести данную функицю в отдельный метод
-    others.sort_by_key(|v| v.0);
+fn get_under_replicated_segments(events: &mut [RangeEvent], replication_factor: u32) -> HashSet<usize> {
+    events.sort_by_key(|k| k.event.get_index());
 
-    for other in others {
-        if range.1 < other.0 || range.0 > other.1 {
-            continue
-        } else {
-            return true;
+    let mut num_of_copies = HashMap::new();;
+    let mut bad_segments = HashSet::new();
+    let mut stored = HashMap::new();
+    for event in events {
+        match event.event {
+            RangeEventType::Start(v) => *num_of_copies.entry(event.chunk_version).or_insert(0) += 1,
+            RangeEventType::End(v) => {
+                *num_of_copies.get_mut(&event.chunk_version).unwrap() -= 1;
+                if *num_of_copies.get(&event.chunk_version).unwrap_or(&0) < replication_factor {
+                    for segment in stored.get(&event.chunk_version).unwrap_or(&HashSet::with_capacity(0)) {
+                        bad_segments.insert(*segment);
+                    }
+                    stored.get_mut(&event.chunk_version).map(HashSet::clear);
+                }
+            },
+            RangeEventType::StoredStart(v, index) => {
+                stored.entry(event.chunk_version).or_insert(HashSet::new()).insert(index);
+                if *num_of_copies.get(&event.chunk_version).unwrap_or(&0) < replication_factor {
+                    bad_segments.insert(index);
+                }
+            }
+            RangeEventType::StoredEnd(v, index) => {
+                stored.get_mut(&event.chunk_version).map(|map| map.remove(&index));
+                if *num_of_copies.get(&event.chunk_version).unwrap_or(&0) < replication_factor {
+                    bad_segments.insert(index);
+                }
+            }
         }
     }
-
-    false
+    bad_segments
 }

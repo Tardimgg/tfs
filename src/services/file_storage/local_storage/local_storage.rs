@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::io::Error;
 use std::marker::PhantomData;
+use std::ops::Bound::Included;
 use std::path::{Path, PathBuf};
 use actix_web::ResponseError;
 use async_trait::async_trait;
@@ -96,6 +97,8 @@ impl FileStorage for LocalStorage {
     }
     // добавить возможность указать точную версию, ну и вообще подумать на консистентностью таких штук
 
+
+    // переделать на RangeBound
     async fn get_file<'a>(&self, path: &str, ranges_o: Option<&'a [FileRange]>, max_version: Option<ChunkVersion>) -> Result<Vec<(FileRange, FileStream)>, FileReadingError> {
         if let Some(ranges) = ranges_o {
             if !check_ranges(ranges) {
@@ -136,7 +139,6 @@ impl FileStorage for LocalStorage {
                 break;
             }
         }
-
 
 
         events.sort_unstable_by(|e1, e2| {
@@ -280,11 +282,14 @@ fn cast_end_of_chunk_to_index(end_of_file_range: &EndOfFileRange) -> &u64 {
     }
 }
 
+// нужно тут все переписать на range bound. range (from..to), не включая to, иначе нормально не обработать ____||____ последовательные сегменты
+// идем до end максимальной версии путем блокирования обработки сегментов более старых
 fn calculate_sources_for_ranges(events: &[Event]) -> Result<Vec<(ChunkFilename, (u64, EndOfFileRange))>, FileReadingError> {
     let mut in_request = false;
     let mut ranges: Vec<(ChunkFilename, (u64, EndOfFileRange))> = Vec::new();
     let mut opened_exist = BTreeMap::new();
     let mut already_closed = HashSet::new();
+    let mut min_version = 0;
 
     for event in events {
         match event {

@@ -51,7 +51,13 @@ pub enum DhtPutError {
     #[error("Inval")]
     UnexpectedDhtState(#[from] serde_json::Error),
     #[error("Inval")]
-    InternalError(#[from] DhtGetError)
+    InternalError(String)
+}
+
+impl From<String> for DhtPutError {
+    fn from(value: String) -> Self {
+        DhtPutError::InternalError(value)
+    }
 }
 
 
