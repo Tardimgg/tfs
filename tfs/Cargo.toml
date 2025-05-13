@@ -1,0 +1,51 @@
+[package]
+name = "tfs"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+#libtorrent-sys = "1.0.0"
+#mainline = "2.0.1"
+mainline = {path = "../../mainline", features = ["async"]}
+typed-builder = "0.20.0"
+tokio = { version = "1.41.0", features = ["full", "tracing"]}
+flume = { version = "=0.11.0" , features = ["async"]}
+futures = { version = "0.3.29", features = []}
+sha2 = { version = "0.10.8" , features = ["sha2-asm"]}
+thiserror = "2.0.3"
+ed25519-dalek = "2.1.1"
+serde_json = "=1.0.133"
+serde = { version = "1.0.210", features = ["derive"] }
+tryhard = "0.5.1"
+rand = "0.8.5"
+actix-web = { version = "4.9.0", features = ["openssl"]}
+actix-multipart = "0.7.2"
+actix = "0.13.5"
+async-trait = "0.1.83"
+crossbeam = "0.8.4"
+bytes = "1.7.1"
+enum_dispatch = "0.3.13"
+tokio-util = "0.7.13"
+async-stream = "0.3.6"
+actix-files = "0.6.6"
+#concurrent-map = "5.0.37"
+dashmap = "6.1.0"
+tokio-scoped = "0.2.0"
+awc = "3.5.1"
+moka = { version = "0.12.10" , features = ["future"]}
+reqwest = { version = "0.12.12" , features = ["stream", "json"]}
+tokio-stream = { version = "0.1.17" , features = ["sync"]}
+jsonm-bugfixed = "0.2.1"
+strum = "0.27"
+strum_macros = "0.27"
+itertools = "0.14.0"
+const_for = "0.1.5"
+console-subscriber = "0.4.1"
+jwt = "0.16.0"
+hmac = "0.12.1"
+env_logger = "0.11.8"
+log = "0.4.22"
+actix-cors = "0.7.1"
+openssl = "0.10.72"
