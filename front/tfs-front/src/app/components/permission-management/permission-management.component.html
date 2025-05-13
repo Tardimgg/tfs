@@ -1,0 +1,45 @@
+<h1 mat-dialog-title>Управление разрешениями</h1>
+<div mat-dialog-content>
+  <h4 class="text-base text-black">Файл: {{path}}</h4>
+  <h2 class="font-extrabold mt-2 text-lg">Общий доступ</h2>
+  <mat-select class="mt-2" [(value)]="isPublic">
+    <mat-option [value]="false">Общий доступ ограничен</mat-option>
+    <mat-option [value]="true">Доступен всем</mat-option>
+  </mat-select>
+
+  <h2 class="font-extrabold text-1.5xl mt-5 text-lg">Персональный доступ</h2>
+  <div class="scrollable">
+    <div *ngFor="let permission of displayedPermissions | keyvalue">
+      <div class="relative max-w-prose my-2" >
+        <span class="scrollable-item text-black text-base">{{permission.key}}</span>
+<!--        <div class="relative max-w-prose">-->
+          <span class="scrollable-item absolute right-13 text-black text-base">{{castPermissionsToString(permission.value)}}</span>
+          <button class="settings absolute right-6 top-1/2 transform -translate-y-1/2" (click)="openPermissionController(permission.key)"><img class="settings-icon"
+                                                                                 src="settings.svg" alt="Настроить"/></button>
+        <button class="delete absolute right-0 top-1/2 transform -translate-y-1/2" (click)="markUserPermissionsAsRevocable(permission.key)">X</button>
+<!--        </div>-->
+      </div>
+    </div>
+    <div *ngFor="let permission of displayedNewPermissions; let i = index">
+      <div class="relative max-w-prose my-2" >
+        <input matInput placeholder=" login" [(ngModel)]="permission[0]" class="placeholder-gray-500 ml-0.5 border border-gray-800 scrollable-item text-black text-base"
+               value="{{permission[0]}}"/>
+        <!--        <div class="relative max-w-prose">-->
+        <span class="scrollable-item absolute right-13 text-black text-base">{{castPermissionsToString(permission[1])}}</span>
+        <button class="settings absolute right-6 top-1/2 transform -translate-y-1/2" (click)="openPermissionController(permission[0])"><img class="settings-icon"
+                                                                                                                                             src="settings.svg" alt="Настроить"/></button>
+        <button class="delete absolute right-0 top-1/2 transform -translate-y-1/2" (click)="deleteNewPermission(i)">X</button>
+        <!--        </div>-->
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<button mat-button color="success" style="color: black" (click)="clickAddPermission()">Добавить разрешение</button>
+
+
+<div mat-dialog-actions>
+  <button mat-button mat-dialog-close style="color: black">Закрыть</button>
+  <button mat-raised-button style="background-color: green;  color: #fff;" (click)="save()">Сохранить изменения</button>
+</div>

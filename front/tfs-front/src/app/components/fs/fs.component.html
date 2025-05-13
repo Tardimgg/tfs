@@ -1,0 +1,80 @@
+
+
+<!--<div class="center" style="position: absolute; height: 100%; width: 100%;" >-->
+<!---->
+<!--  <ngx-file-drop dropZoneLabel="" (onFileDrop)="dropped($event)"-->
+<!--                 (onFileOver)="fileOver($event)" (onFileLeave)="fileLeave($event)"-->
+<!--                 dropZoneClassName="fit_window" >-->
+<!--  </ngx-file-drop>-->
+<!---->
+<!---->
+<!---->
+<!--</div>-->
+<!--<div style="height: 100px; width: 100px; background: red" (drop)="drop123($event)" (dragenter)="drageneter($event)">-->
+<!--        <button></button>-->
+<!--</div>-->
+<div id="fs_wrapper" class="fit_window" style="position: relative;
+    ;"
+     (drop)="drop123($event)"
+     (dragstart)="dragstart($event)"
+     (dragenter)="drageneter($event)"
+     (dragover)="dragover($event)"
+     (dragleave)="dragleave($event)"
+    [class.drop_file]="isActiveDrop > 0"
+>
+
+<!--  <button class="bg-green-500 hover:bg-green-700 text-white font-bold py-5 px-5 rounded-full text-3xl" (click)="createFolder()" style="position:absolute; right: 50px; bottom: 50px; width: 30px; height: 30px">+</button>-->
+  <button class="bg-green-600 hover:bg-green-800 text-white font-bold py-2.5 px-5 rounded-full text-3xl absolute right-10 bottom-10" (click)="createFolder()">+</button>
+  <div *ngIf="uploadingInProgress.size != 0 || downloadInProgress.size != 0"
+       class="absolute right-10 bottom-30 border-5 border-solid;"
+       style="width: 20em; border-color: #b2cbe3; border-radius: 10px">
+    <h2 *ngIf="uploadingInProgress.size != 0" class="ml-2 mr-2 mt-1">Загрузки:</h2>
+    <div class="ml-2 mr-2 mb-2" *ngFor="let uploading of uploadingInProgress | keyvalue;">
+      <h2 class="truncate">{{uploading.value.title}}</h2>
+      <h2>{{uploading.value.speed.toFixed(2)}} МиБ/С</h2>
+      <div >
+        <mat-progress-bar [value]="uploading.value.progress"/>
+      </div>
+    </div>
+
+    <h2 *ngIf="downloadInProgress.size != 0" class="ml-2 mr-2 mt-1">Скачивание:</h2>
+    <div class="ml-2 mr-2 mb-2" *ngFor="let download of downloadInProgress | keyvalue;">
+      <h2 class="truncate">{{download.value.title}}</h2>
+      <h2>{{download.value.speed.toFixed(2)}} МиБ/С</h2>
+      <div >
+        <mat-progress-bar [value]="download.value.progress"/>
+      </div>
+    </div>
+
+  </div>
+
+
+  <ngx-voyage
+    [(path)]="path"
+    [files]="files()"
+    [loading]="filesResource.isLoading()"
+    (previewFile)="getFileContent($event)"
+    (openFile)="openFile($event)"
+    (permissionsManagement)="openPermissionManagement($event)"
+    (modifyFile)="openModifyFileWindow($event)"
+    (deleteFile)="openModifyFileWindow($event)"
+    [message]="message()"
+  >
+
+    <ng-template #header>
+      <div class="m-1 flex flex-row items-center">
+        <img style="width: 2em; margin-left: 0.1em" src="logo.png"  alt=""/>
+        <h2 class="table-cell align-middle text-center text-2xl m-1"><span>tfs</span></h2>
+      </div>
+<!--      <img style="width: 2em; margin-left: 0.35em" src="logo.png" />-->
+<!--      <h2>tfs</h2>-->
+<!--      <span style="font-size: 2em; font-weight: bold; margin-left: 0.3em">tfs</span>-->
+    </ng-template>
+    <ng-template #footer>
+      <app-user-info/>
+    </ng-template>
+
+  </ngx-voyage>
+
+</div>
+

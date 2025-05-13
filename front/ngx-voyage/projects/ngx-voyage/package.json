@@ -1,0 +1,30 @@
+{
+  "name": "ngx-voyage",
+  "version": "0.0.1",
+  "description": "File Explorer Component for Angular built with PrimeNG",
+  "keywords": [
+    "angular",
+    "primeng",
+    "file explorer"
+  ],
+  "homepage": "https://github.com/mschn/ngx-voyage",
+  "bugs": {
+    "url": "https://github.com/mschn/ngx-voyage/issues"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Mathieu Schnoor",
+    "email": "mathieu.schnoor@gmail.com"
+  },
+  "peerDependencies": {
+    "@angular/common": "^19.1.0",
+    "@angular/core": "^19.1.0",
+    "@primeng/themes": "^19.0.9",
+    "primeng": "^19.0.0",
+    "highlight.js": "^11.11.1"
+  },
+  "dependencies": {
+    "tslib": "^2.3.0"
+  },
+  "sideEffects": false
+}

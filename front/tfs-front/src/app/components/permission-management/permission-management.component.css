@@ -1,0 +1,75 @@
+
+.scrollable {
+  overflow-y: scroll;
+  height: 50%;
+  /*align-items: center;*/
+}
+
+
+.scrollable-item {
+  /*align-self : center;*/
+}
+
+.settings {
+  /*margin-top: 1em;*/
+  /*border:0 none;*/
+  /*display: grid;*/
+  /*text-align: center;*/
+  /*vertical-align: center;*/
+  /*align-items: center;*/
+  /*vertical-align: bottom;*/
+  /*display: inline;*/
+  /*padding-top: 1px;*/
+  /*padding-bottom: 1px;*/
+  /*background-size: cover;*/
+
+
+  /*display: block;*/
+  /*display:inline-block;*/
+  /*padding: 0px;*/
+  /*margin: 0px;*/
+  width: 1.8em;
+  height: 1.8em;
+  background-color: transparent;
+  border: 0px;
+  border-radius: 50%;
+}
+
+.settings:hover {
+  background-color: #d5fde7;
+  outline: 1px solid #17A78B;
+}
+
+.delete {
+  width: 1.8em;
+  height: 1.8em;
+  background-color: transparent;
+  border: 0px;
+  border-radius: 50%;
+}
+
+
+.delete:hover {
+  background-color: #efa6a6;
+  outline: 1px solid red;
+}
+
+
+
+.settings-icon{
+  /*margin-top: 0.2em;*/
+  /*display: grid;*/
+  /*align-items : center;*/
+  /*background-color: red;*/
+  /*margin: 0 auto;*/
+  max-width: 1.5em;
+  max-height: 1.5em;
+  object-fit: cover;
+
+  display:inline-block;
+}
+
+.mat-success:hover {
+  background-color: #f3fdf7;
+  /*color: #fff;*/
+}

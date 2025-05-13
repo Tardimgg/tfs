@@ -1,0 +1,19 @@
+<div class="preview">
+  <div class="topbar">
+    <p-button (onClick)="closed.emit()">
+      <ngx-voyage-icon type="xmark"></ngx-voyage-icon>
+      {{ "CLOSE" | translate }}
+    </p-button>
+    <h1>{{ name() }}</h1>
+  </div>
+
+  <div class="content">
+    @if (isPdf()) {
+      <ngx-voyage-pdf [data]="data()"></ngx-voyage-pdf>
+    } @else if (isImage()) {
+      <ngx-voyage-img [data]="data()"></ngx-voyage-img>
+    } @else if (isText()) {
+      <ngx-voyage-text [data]="data()" [name]="name()"></ngx-voyage-text>
+    }
+  </div>
+</div>

@@ -1,0 +1,38 @@
+<h1 mat-dialog-title>Изменение разрешений</h1>
+<div mat-dialog-content>
+  <h4 class="text-base text-black">Файл: {{filename}}</h4>
+  <h4 class="text-base text-black">Пользователь: {{userLogin}}</h4>
+  <h2 class="font-extrabold text-1.5xl text-lg">Список разрешений</h2>
+  <div *ngFor="let permission of displayedPermissions; let i = index">
+    <div class="relative max-w-prose my-2" >
+      <span class="scrollable-item text-black text-base">{{castToE(permission)}}</span>
+      <button class="delete absolute right-0 top-1/2 transform -translate-y-1/2" (click)="markAsDeleted(i)">X</button>
+    </div>
+  </div>
+
+
+  <div *ngFor="let selectedPermission of displayedNewPermissions; let i = index" style="display: inline">
+    <div class="relative max-w-prose my-2" >
+      <mat-select [value] = "selectedPermission.permissionType" (selectionChange)="changeNewPermission(i, $event.value)" class="border p-1" style="width: 24em">
+        @for (permission of allPermissions; track $index) {
+          <mat-option [value]="permission">{{castToE(permission)}}</mat-option>
+        }
+      </mat-select>
+      <!--  <span class="scrollable-item">{{permission}}</span>-->
+      <button class="delete absolute right-0 top-1/2 transform -translate-y-1/2" (click)="deleteNewPermission(i)">X</button>
+      <!--      <p align="center">-->
+      <!--        <img class="settings-icon"-->
+      <!--             src="settings.svg" alt="Настроить"/>-->
+      <!--      </p>-->
+
+      <!--      <button class="settings" (click)="openPermissionController(filename)"></button>-->
+    </div>
+  </div>
+</div>
+
+<button mat-button color="success" style="color: black" (click)="clickAddPermission()">Добавить разрешение</button>
+
+<div mat-dialog-actions>
+  <button mat-button mat-dialog-close style="color: black">Отменить изменения</button>
+  <button mat-raised-button style="background-color: green;  color: #fff;" (click)="closeDialog()">Вернуться</button>
+</div>

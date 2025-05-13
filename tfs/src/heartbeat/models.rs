@@ -16,7 +16,7 @@ impl RangeEvent {
 }
 
 #[derive(Copy, Clone)]
-pub enum RangeEventType {
+pub enum RangeEventType {   
     Start(u64),
     End(u64),
     StoredStart(u64, usize),

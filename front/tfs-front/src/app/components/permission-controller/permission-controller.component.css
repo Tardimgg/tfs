@@ -1,0 +1,18 @@
+.delete {
+  width: 1.8em;
+  height: 1.8em;
+  background-color: transparent;
+  border: 0px;
+  border-radius: 50%;
+}
+
+
+.delete:hover {
+  background-color: #efa6a6;
+  outline: 1px solid red;
+}
+
+.mat-success:hover {
+  background-color: #f3fdf7;
+  /*color: #fff;*/
+}

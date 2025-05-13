@@ -1,0 +1,15 @@
+node_modules
+.angular
+.vscode
+dist
+.DS_Store
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+results.json
+
+# jest
+coverage

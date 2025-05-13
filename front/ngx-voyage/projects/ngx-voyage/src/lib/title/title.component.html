@@ -1,0 +1,93 @@
+<div class="title">
+  <div class="nav-buttons">
+    <p-button
+      icon="pi"
+      text="true"
+      severity="secondary"
+      (click)="onBack()"
+      [disabled]="backButtonDisabled()"
+    >
+      <ngx-voyage-icon type="chevron-left"></ngx-voyage-icon>
+    </p-button>
+    <p-button
+      icon="pi"
+      text="true"
+      severity="secondary"
+      (click)="onForward()"
+      [disabled]="forwardButtonDisabled()"
+    >
+      <ngx-voyage-icon type="chevron-right"></ngx-voyage-icon>
+    </p-button>
+  </div>
+
+  <div class="path">
+    @for (fragment of pathFragments(); track fragment; let isLast = $last) {
+      <p-button
+        (onClick)="navigate.emit(fragment.path)"
+        variant="text"
+        data-testid="title-fragment"
+      >
+        @if (fragment.path === "/") {
+          <ngx-voyage-icon type="desktop"></ngx-voyage-icon>
+        } @else {
+          <span class="fragment">{{ fragment.name }}</span>
+        }
+      </p-button>
+      @if (!isLast) {
+        <span class="separator">/</span>
+      }
+    }
+
+    @if (pathIsBookmarked()) {
+      <p-button
+        variant="text"
+        class="bookmark bookmarked"
+        (onClick)="onRemoveBookmark()"
+      >
+        <ngx-voyage-icon type="star-solid"></ngx-voyage-icon>
+      </p-button>
+    } @else if (path() !== "/") {
+      <p-button
+        variant="text"
+        class="bookmark"
+        (onClick)="onAddBookmark()"
+        data-testid="add-bookmark"
+      >
+        <ngx-voyage-icon type="star"></ngx-voyage-icon>
+      </p-button>
+    } @else {
+      <div class="no-bookmark"></div>
+    }
+    <div class="justify-anchor-small"></div>
+  </div>
+
+  <p-selectbutton
+    [options]="viewOptions"
+    [ngModel]="selectedView()"
+    (ngModelChange)="setSelectedView($event.type)"
+    allowEmpty="false"
+    size="small"
+    class="view-select-button"
+  >
+    <ng-template #item let-item>
+      <ngx-voyage-icon
+        [attr.data-testid]="'select-view-' + item.type"
+        [type]="item.icon"
+        class="view-icons"
+      ></ngx-voyage-icon>
+    </ng-template>
+  </p-selectbutton>
+
+  <p-button
+    (click)="op.toggle($event)"
+    icon="pi"
+    text="true"
+    severity="secondary"
+    class="bars-button"
+  >
+    <ngx-voyage-icon type="bars"></ngx-voyage-icon>
+  </p-button>
+</div>
+<p-popover #op>
+  <ngx-voyage-settings></ngx-voyage-settings>
+</p-popover>

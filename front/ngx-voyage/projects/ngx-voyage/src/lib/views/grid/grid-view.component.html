@@ -1,0 +1,36 @@
+<div class="view" data-testid="grid-view">
+  @for (file of sortedFiles(); track file.name; let index = $index) {
+    <div
+      class="item"
+      [ngClass]="{
+        active: isSelectedFile(file),
+        'hidden-file': file.name.startsWith('.'),
+      }"
+      (dblclick)="onDoubleClick(file)"
+      (mousedown)="onMouseDown($event)"
+      (contextmenu)="onContextMenu($event, file)"
+      (click)="selectedFile.set(file)"
+      (keypress.enter)="onDoubleClick(file)"
+      [tabindex]="0"
+      [attr.data-fileIndex]="index"
+    >
+      @if (file.isDirectory) {
+        <ngx-voyage-icon type="folder"></ngx-voyage-icon>
+      } @else {
+        <ngx-voyage-icon [type]="getFileIcon(file)"></ngx-voyage-icon>
+      }
+      <div class="name" data-testid="files-grid-name">{{ file.name }}</div>
+    </div>
+  }
+
+  <p-contextmenu #contextMenu [model]="menuItems"></p-contextmenu>
+
+  @let data = previewData();
+  @if (showPreview() && data) {
+    <ngx-voyage-preview
+      [name]="selectedFile()?.name ?? ''"
+      [data]="data"
+      (closed)="showPreview.set(false)"
+    ></ngx-voyage-preview>
+  }
+</div>

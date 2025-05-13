@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bumpType:
+        type: choice
+        description: "Bump type: major | minor | patch"
+        required: true
+        default: "patch"
+        options:
+          - major
+          - minor
+          - patch
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: "0"
+
+      - name: Bump version and push tag
+        uses: anothrNick/github-tag-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WITH_V: false
+          DEFAULT_BUMP: ${{ github.event.inputs.bumpType || 'patch' }}
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: "20"
+
+      - run: npm ci
+
+      - run: cp README.md LICENSE projects/ngx-voyage/
+
+      - run: |
+          cd projects/ngx-voyage
+          git config user.email "mathieu.schnoor@gmail.com"
+          git config user.name "Mathieu Schnoor"
+          npm version from-git
+
+      - run: npm run build:lib
+
+      - uses: JS-DevTools/npm-publish@v3
+        with:
+          token: ${{ secrets.NPM_TOKEN }}
+          access: public
+          package: dist/ngx-voyage

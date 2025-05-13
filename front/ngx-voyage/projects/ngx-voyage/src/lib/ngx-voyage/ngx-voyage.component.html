@@ -1,0 +1,38 @@
+<div
+  class="ngx-voyage"
+>
+  <div
+    class="sidebar"
+  >
+    @if (header()) {
+      <ng-container *ngTemplateOutlet="header()!"></ng-container>
+    }
+    <ngx-voyage-bookmarks [(path)]="path"></ngx-voyage-bookmarks>
+    <div class="footer" *ngIf="footer()">
+      <ng-container *ngTemplateOutlet="footer()!"></ng-container>
+    </div>
+  </div>
+
+  <div class="center">
+    <ngx-voyage-title
+      [path]="path()"
+      (navigate)="path.set($event)"
+    ></ngx-voyage-title>
+
+    <div
+      class="files"
+    >
+      <ngx-voyage-files-view
+        [(path)]="path"
+        [files]="files()"
+        [message]="message()"
+        [loading]="loading()"
+        (openFile)="openFile.emit($event)"
+        (previewFile)="previewFile.emit($event)"
+        (permissionsManagement)="permissionsManagement.emit($event)"
+        (modifyFile)="modifyFile.emit($event)"
+        (deleteFile)="deleteFile.emit($event)"
+      ></ngx-voyage-files-view>
+    </div>
+  </div>
+</div>

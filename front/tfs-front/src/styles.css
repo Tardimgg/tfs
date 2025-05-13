@@ -1,0 +1,35 @@
+/* You can add global styles to this file, and also import other style files */
+
+@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body {
+  height: 100%;
+  margin: 0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+
+.fit_window {
+  position: absolute;
+  height: 100%;
+  width: 100%;
+
+}
+
+.all_width {
+  width: 100%;
+}
+
+.drop_file {
+  /*background-color: blanchedalmond;*/
+  opacity:0.2
+  /*background-color: red;*/
+  /*background: chartreuse;*/
+  /*color: chocolate;*/
+}
+
+html, body { height: 100%; }
+body { margin: 0; font-family: Roboto, "Helvetica Neue", sans-serif; }
