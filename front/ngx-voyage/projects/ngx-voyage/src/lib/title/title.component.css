@@ -1,0 +1,64 @@
+.title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+
+  .nav-buttons {
+    display: flex;
+  }
+
+  .path {
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    justify-content: flex-end;
+    width: 100%;
+    padding: 0.25rem;
+    border: 1px solid var(--p-form-field-border-color);
+    border-radius: var(--p-form-field-border-radius);
+    height: 3.2rem;
+    align-content: center;
+    background: var(--p-form-field-background);
+    color: var(--p-form-field-color);
+
+    .fragment {
+      white-space: nowrap;
+    }
+
+    .separator {
+      color: var(--p-text-muted-color);
+    }
+  }
+
+  .bookmark {
+    margin-left: auto;
+    display: none;
+
+    &.bookmarked ngx-voyage-icon {
+      color: var(--p-yellow-500);
+    }
+  }
+
+  .view-select-button {
+    display: none;
+  }
+
+  .no-bookmark,
+  .justify-anchor-small {
+    margin-left: auto;
+  }
+
+  @container (width >= 36rem) {
+    .bookmark {
+      display: inline-block;
+    }
+
+    .justify-anchor-small {
+      display: none;
+    }
+
+    .view-select-button {
+      display: inline-flex;
+    }
+  }
+}

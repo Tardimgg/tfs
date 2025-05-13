@@ -1,0 +1,10 @@
+<div class="settings">
+  <div class="setting">
+    <label for="showHiddenFiles">{{ "SHOW_HIDDEN_FILES" | translate }}</label>
+    <p-toggleswitch
+      inputId="showHiddenFiles"
+      [ngModel]="store.showHiddenFiles"
+      (ngModelChange)="store.toggleHiddenFiles()"
+    />
+  </div>
+</div>

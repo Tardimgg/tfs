@@ -1,0 +1,28 @@
+/* You can add global styles to this file, and also import other style files */
+@import "tailwindcss";
+
+@import "../../../node_modules/highlight.js/styles/github.min.css";
+@import "../../../node_modules/highlight.js/styles/github-dark.min.css" screen
+  and (prefers-color-scheme: dark);
+
+html,
+body {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+code {
+  background: white;
+  font-size: 0.9rem;
+  padding: 0.25rem;
+
+  @media (prefers-color-scheme: dark) {
+    background: #111;
+  }
+}
+
+pre {
+  white-space: pre-wrap;
+}

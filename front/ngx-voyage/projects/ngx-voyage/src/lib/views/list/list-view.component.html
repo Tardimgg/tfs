@@ -1,0 +1,85 @@
+<div data-testid="list-view">
+  <p-table
+    #dataTable
+    [value]="sortedFiles()"
+    [scrollable]="true"
+    scrollHeight="flex"
+    stripedRows
+    selectionMode="single"
+    metaKeySelection="true"
+    [(selection)]="selectedFile"
+    [customSort]="true"
+    (sortFunction)="onSort($event)"
+    [sortField]="sortField()"
+    [sortOrder]="sortOrder()"
+    [resizableColumns]="true"
+    [tableStyle]="{ 'table-layout': 'fixed' }"
+  >
+    <ng-template #header>
+      <tr>
+        <th pResizableColumn pSortableColumn="name">
+          {{ "NAME" | translate }} <p-sortIcon field="name" />
+        </th>
+        <th pResizableColumn pSortableColumn="size">
+          {{ "SIZE" | translate }} <p-sortIcon field="size" />
+        </th>
+        <th pResizableColumn pSortableColumn="type">
+          {{ "TYPE" | translate }} <p-sortIcon field="type" />
+        </th>
+        <th pResizableColumn pSortableColumn="modifiedDate">
+          {{ "DATE" | translate }} <p-sortIcon field="modifiedDate" />
+        </th>
+      </tr>
+    </ng-template>
+    <ng-template #body let-file let-rowIndex="rowIndex">
+      <tr
+        (contextmenu)="onContextMenu($event, file)"
+        [pSelectableRow]="file"
+        (dblclick)="onDoubleClick(file)"
+        (mousedown)="onMouseDown($event)"
+        [attr.data-fileIndex]="rowIndex"
+        [ngClass]="{ 'hidden-file': file.name.startsWith('.') }"
+      >
+        <td>
+          <div class="name">
+            <div>
+              @if (file.isDirectory) {
+                <ngx-voyage-icon type="folder"></ngx-voyage-icon>
+              } @else {
+                <ngx-voyage-icon [type]="getFileIcon(file)"></ngx-voyage-icon>
+              }
+            </div>
+            <span class="file-name" data-testid="files-list-name">{{ file.name }}</span>
+          </div>
+        </td>
+        <td data-testid="files-list-size">
+          {{ prettyBytes(file.size) }}
+        </td>
+        <td data-testid="files-list-type">
+          {{ file.type | translate }}
+        </td>
+        <td data-testid="files-list-date">
+          {{ formatDate(file) }}
+        </td>
+      </tr>
+    </ng-template>
+    <ng-template #emptymessage>
+      <tr>
+        <td colspan="4">
+          <ng-container *ngTemplateOutlet="emptyFiles()!"></ng-container>
+        </td>
+      </tr>
+    </ng-template>
+  </p-table>
+
+  <p-contextmenu #contextMenu [model]="menuItems"></p-contextmenu>
+
+  @let data = previewData();
+  @if (showPreview() && data) {
+    <ngx-voyage-preview
+      [name]="selectedFile()?.name ?? ''"
+      [data]="data"
+      (closed)="showPreview.set(false)"
+    ></ngx-voyage-preview>
+  }
+</div>
