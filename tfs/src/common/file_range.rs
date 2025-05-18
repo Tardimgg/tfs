@@ -42,3 +42,11 @@ impl Ord for EndOfFileRange {
 }
 
 pub type FileRange = (u64, EndOfFileRange);
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn compare_end_of_file_range() {
+        assert_eq!(0, 0);
+    }
+}

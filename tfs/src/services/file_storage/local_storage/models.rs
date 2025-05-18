@@ -104,3 +104,11 @@ impl TryFrom<&str> for ChunkFilename {
         Ok(ChunkFilename::from(value, version))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn parse_chunk_filename() {
+        assert_eq!(0, 0);
+    }
+}

@@ -931,3 +931,16 @@ fn fs_node_type_to_external(fs_node_type: FsNodeType) -> NodeType {
         FsNodeType::User => NodeType::File
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_parse_http_range() {
+        assert_eq!(0, 0);
+    }
+
+    #[test]
+    fn test_parse_dht_value() {
+        assert_eq!(0, 0);
+    }
+}

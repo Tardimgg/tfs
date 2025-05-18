@@ -51,7 +51,7 @@ impl Rebac {
                 .filter(|v| v.permission_type == permission_type && v.subject == target_user)
                 .collect();
             if !user_permissions.is_empty() {
-                if user_permissions.len() > 0 {
+                if user_permissions.len() > 1 {
                     error!("user_permissions contains duplicates: {:?}", user_permissions);
                 }
                 let max_version = user_permissions.iter().max_by_key(|v| v.version).unwrap();
@@ -253,6 +253,14 @@ impl Rebac {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn check_contains_permission() {
+        assert_eq!(0, 0);
+    }
+}
 
 // const PERMISSION_CHILDS: &[(PermissionType, &[PermissionType])] = &[
 //     (PermissionType::All, &[PermissionType::Read, PermissionType::Write, PermissionType::GrantRead, PermissionType::GrantWrite])

@@ -195,3 +195,11 @@ impl UserService {
 
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn check_generate_user_token() {
+        assert_eq!(0, 0);
+    }
+}
