@@ -118,19 +118,38 @@ impl DHTMap {
         Ok(versions)
     }
     async fn get_mainline_dht_item(&self, key: &str) -> Result<Option<MutableItem>, DhtGetError> {
-        let mut res = filter_mainline_items(self.get_non_filtered_mainline_dht_items(key).await?);
-        if res.len() == 0 {
-            return Ok(None);
-        }
-        let first_v = res.get(0).map(|v| v.value()).unwrap();
+        let mut non_filtered = self.get_non_filtered_mainline_dht_items(key).await?;
 
-        if !res.iter().all(|v| v.value() == first_v) {
-            res.iter().for_each(|v| error!("err {}", String::from_utf8_lossy(v.value())));
-            // кажется в этом случае все запросы с наибольшем seq неуспешны, нужно найти наиболее младшего в единственном экземпляре
-            // (и возможно обновить его), тк хз сколько он будет хранится
-            return Err(DhtGetError::InternalError("".to_string()))
+        let mut fallback = 0;
+        loop {
+            let mut res = filter_mainline_items(&non_filtered);
+            if res.len() == 0 {
+                return Ok(None);
+            }
+            let first_v = res.get(0).map(|v| v.value()).unwrap();
+
+            if !res.iter().all(|v| v.value() == first_v) {
+                res.iter().for_each(|v| error!("err {}", String::from_utf8_lossy(v.value())));
+                // кажется в этом случае все запросы с наибольшем seq неуспешны, нужно найти наиболее младшего в единственном экземпляре
+                // (и возможно обновить его), тк хз сколько он будет хранится
+                error!("An unexpected value was received from dht, rollback = {}", fallback);
+                non_filtered.retain(|v| v.seq() < res.get(0).unwrap().seq());
+                fallback += 1;
+                if non_filtered.is_empty() {
+                    break;
+                }
+                // return Err(DhtGetError::InternalError("".to_string()))
+            } else {
+                if fallback > 0 {
+                    error!("fallback scheme with a rollback of {} entries is used", fallback)
+                }
+                return Ok(Some(res.swap_remove(0)))
+            }
         }
-        Ok(Some(res.swap_remove(0)))
+        if fallback > 0 {
+            error!("not found valid data after {} attempts", fallback)
+        }
+        return Ok(None);
     }
 
     pub async fn put(&self, key: &str, value: &str) -> Result<(), DhtPutError> {
@@ -193,15 +212,16 @@ impl DHTMap {
     }
 }
 
-fn filter_mainline_items(items: Vec<MutableItem>) -> Vec<MutableItem> {
+fn filter_mainline_items(items: &[MutableItem]) -> Vec<MutableItem> {
     if items.len() == 0 {
         return vec![];
     }
     let max_seq = *items.iter().map(|v| v.seq()).max().unwrap();
 
     items
-        .into_iter()
+        .iter()
         .filter(|v| *v.seq() == max_seq)
+        .map(|v| v.clone())
         .collect()
 }
 

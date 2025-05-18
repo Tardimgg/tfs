@@ -22,8 +22,6 @@ pub struct Permission {
     pub subject: u64,
     pub object: RebacKey,
     pub permission_type: PermissionType,
-    #[serde(default)]
     pub version: u64,
-    #[serde(default)]
     pub deleted: bool
 }

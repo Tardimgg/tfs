@@ -4,6 +4,7 @@ import {AuthService} from './auth.service';
 import {PermissionType} from '../entities/permission-type';
 import {ObjType} from '../entities/obj-type';
 import {UserPermission} from '../entities/user-permission';
+import {BalancerService} from './balancer.service';
 
 @Injectable({
   providedIn: 'root'
@@ -14,9 +15,9 @@ export class PermissionService {
   // private url = document.location.hostname + '/api/auth/api/';
   // private url = 'http://127.0.0.1:8080/virtual_fs';
   // private url = 'https://10.42.0.212:8081';
-  private url = 'https://158.160.98.131:8081';
-  
-  constructor(private client: HttpClient, private authService: AuthService) { }
+  // private url = 'https://158.160.98.131:8081';
+
+  constructor(private client: HttpClient, private authService: AuthService, private balancerService: BalancerService) { }
 
 
   public putPermission(login: string, objType: ObjType, objId: string, permission: PermissionType) {
@@ -25,7 +26,7 @@ export class PermissionService {
     // console.log(PermissionType as any);
     // let permissionString = (PermissionType as any).entru[permission] as string;
 
-    this.client.put(`${this.url}/permission/user/${login}/${objType}/${objId}/${permission}`, {}, {
+    this.client.put(`${this.balancerService.getIP()}/permission/user/${login}/${objType}/${objId}/${permission}`, {}, {
       headers: {
         "Authorization": token == null ? "" : token
       }
@@ -38,7 +39,7 @@ export class PermissionService {
   public deletePermission(login: string, objType: ObjType, objId: string, permission: PermissionType) {
     let token = this.authService.getToken();
 
-    this.client.delete(`${this.url}/permission/user/${login}/${objType}/${objId}/${permission}`, {
+    this.client.delete(`${this.balancerService.getIP()}/permission/user/${login}/${objType}/${objId}/${permission}`, {
       headers: {
         "Authorization": token == null ? "" : token
       }
@@ -50,7 +51,7 @@ export class PermissionService {
   public async getPermissions(objType: ObjType, objId: string) {
     let token = this.authService.getToken();
 
-    let response = await fetch(`${this.url}/permission/user/all/${objType}/${objId}`, {
+    let response = await fetch(`${this.balancerService.getIP()}/permission/user/all/${objType}/${objId}`, {
       headers: {
         "Authorization": token == null ? "" : token
       }

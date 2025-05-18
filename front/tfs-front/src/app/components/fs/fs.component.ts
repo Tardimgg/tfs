@@ -14,6 +14,7 @@ import {Router} from '@angular/router';
 import {ObjType} from '../../entities/obj-type';
 import {PermissionService} from '../../services/permission-service';
 import {MatProgressBar} from '@angular/material/progress-bar';
+import {FileModificationComponent} from '../file-modification/file-modification.component';
 
 @Component({
   selector: 'app-fs',
@@ -139,6 +140,20 @@ export class FsComponent {
 
   openModifyFileWindow(path: string) {
     console.log("openModifyFileWindow" + path)
+    this.matDialog.open(FileModificationComponent, {
+      data: {
+        filename: path,
+        // objId: node.id,
+        // objType: objType,
+        // permissions: permissions,
+        // isPublic: false
+      }
+    })
+  }
+
+  deleteFile(path: string) {
+    console.log("delete file " + path)
+    this.fsService.deleteFile(path);
   }
 
   async openPermissionManagement(path: string) {

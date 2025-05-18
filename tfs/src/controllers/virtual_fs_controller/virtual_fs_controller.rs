@@ -9,7 +9,7 @@ use actix_files::NamedFile;
 use actix_multipart::form::{MultipartCollect, MultipartForm};
 use actix_multipart::form::tempfile::TempFile;
 use actix_multipart::Multipart;
-use actix_web::{get, HttpRequest, HttpResponse, post, Responder, ResponseError, Scope, web, put, patch};
+use actix_web::{get, HttpRequest, HttpResponse, post, Responder, ResponseError, Scope, web, put, patch, delete};
 use actix_web::error::HttpError;
 use actix_web::http::header::{ContentType, HeaderName, Range};
 use actix_web::web::{BufMut, Bytes, Json};
@@ -85,6 +85,13 @@ async fn create_file(user: AuthenticatedUser, filename: web::Path<String>, paylo
     Ok(web::Json(meta))
 }
 
+#[delete("/file/{tail:.*}")]
+async fn delete_file(user: AuthenticatedUser, filename: web::Path<String>, payload: web::Payload, req: HttpRequest, fs: web::Data<Arc<SharedFS>>) -> Result<Json<FileMeta>, ApiException> {
+    todo!("delete file");
+    // let meta =  fs.get_ref().put_user_file(user, &filename, FileStream::Payload(payload), None).await?;
+    // Ok(web::Json(meta))
+}
+
 #[patch("/file/{tail:.*}")]
 async fn patch_file(user: AuthenticatedUser, filename: web::Path<String>, payload: web::Payload, req: HttpRequest, fs: web::Data<Arc<SharedFS>>) -> Result<Json<FileMeta>, ApiException> {
     let range = parse_range_header(&req)?;
@@ -127,6 +134,7 @@ pub fn config() -> Scope {
         .service(get_folder)
         .service(create_folder)
         .service(get_file)
+        .service(delete_file)
         .service(get_stored_parts)
         .service(get_file_meta)
         .service(create_file)

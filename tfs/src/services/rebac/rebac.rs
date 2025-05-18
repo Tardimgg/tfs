@@ -41,12 +41,12 @@ pub struct Rebac {
 impl Rebac {
 
     async fn put_permission_impl(&self, target_user: u64, obj_id: RebacKey,
-                                 permission_type: PermissionType) -> Result<(), String> {
+                                 permission_type: PermissionType, version: Option<u64>) -> Result<(), String> {
         let user_permissions = self.get_permissions_of_all_users_without_rights_check(obj_id).await?;
         let mut prev_seq = PrevSeq::Seq(None);
         let mut prev_permissions = Vec::with_capacity(0);
         let mut prev_version = None;
-        if let Some((exists_permission, dht_seq)) = user_permissions {
+        if let Some((mut exists_permission, dht_seq)) = user_permissions {
             let user_permissions: Vec<_> = exists_permission.iter()
                 .filter(|v| v.permission_type == permission_type && v.subject == target_user)
                 .collect();
@@ -54,22 +54,32 @@ impl Rebac {
                 if user_permissions.len() > 1 {
                     error!("user_permissions contains duplicates: {:?}", user_permissions);
                 }
-                let max_version = user_permissions.iter().max_by_key(|v| v.version).unwrap();
+                let (index, max_version) = user_permissions.iter().enumerate()
+                    .max_by_key(|(index, v)| v.version)
+                    .unwrap();
                 if !max_version.deleted {
                     return Ok(());
                 }
-                prev_version = Some(max_version.version)
+                prev_version = Some(max_version.version);
+                exists_permission.swap_remove(index);
             }
 
             prev_seq = PrevSeq::Seq(Some(dht_seq));
             prev_permissions = exists_permission;
+
+        }
+
+        if let Some(specified_version) = version {
+            if prev_version.is_some() && specified_version <= prev_version.unwrap() {
+                return Err("specified version is too old".to_string());
+            }
         }
 
         let permission = Permission {
             subject: target_user,
             object: obj_id,
             permission_type,
-            version: prev_version.map(|v| v + 1).unwrap_or(0),
+            version: version.unwrap_or(prev_version.map(|v| v + 1).unwrap_or(0)),
             deleted: false,
         };
 
@@ -86,7 +96,7 @@ impl Rebac {
     }
 
     pub async fn put_permission(&self, current_user: u64, target_user: u64, obj_id: RebacKey,
-                                permission_type: PermissionType) -> Result<(), String> {
+                                permission_type: PermissionType, version: Option<u64>) -> Result<(), String> {
         let required_user_permission = self.to_grant_mapping.get(&permission_type)
             .ok_or("permission cannot be granted")?;
 
@@ -94,14 +104,14 @@ impl Rebac {
             return Err("access denied".to_string());
         }
 
-        retry_fn(|| self.put_permission_impl(target_user, obj_id, permission_type))
+        retry_fn(|| self.put_permission_impl(target_user, obj_id, permission_type, version))
             .retries(3)
             .custom_backoff(FixedBackoffWithJitter::new(Duration::from_secs(1), 30))
             .await
     }
 
     async fn delete_permission_impl(&self, target_user: u64, obj_id: RebacKey,
-                                 permission_type: PermissionType) -> Result<(), String> {
+                                 permission_type: PermissionType, version: Option<u64>) -> Result<(), String> {
         let user_permissions = self.get_permissions_of_all_users_without_rights_check(obj_id).await?;
         if let Some((mut exists_permission, dht_seq)) = user_permissions {
 
@@ -113,11 +123,19 @@ impl Rebac {
             if !active_permissions_to_delete.is_empty() {
                 let prev_seq = PrevSeq::Seq(Some(dht_seq));
 
+                let last_active_permission = active_permissions_to_delete.iter().max_by_key(|v| v.1).unwrap();
+
+                if let Some(specified_version) = version {
+                    if specified_version <= last_active_permission.1 {
+                        return Err("specified version is too old".to_string());
+                    }
+                }
+
                 let permission = Permission {
                     subject: target_user,
                     object: obj_id,
                     permission_type,
-                    version: active_permissions_to_delete.iter().max_by_key(|v| v.1).unwrap().1,
+                    version: version.unwrap_or(last_active_permission.1 + 1),
                     deleted: true,
                 };
 
@@ -125,6 +143,7 @@ impl Rebac {
                     .err().iter().for_each(|v| error!("{v}"));
 
                 active_permissions_to_delete.iter().rev().for_each(|(i, version)| { exists_permission.swap_remove(*i); });
+                exists_permission.push(permission);
                 let json = serde_json::to_string(&exists_permission).default_res()?;
 
                 let path = format!("{}/{}", self.config.get_val(ConfigKey::RebacPath).await, obj_id.to_str_key());
@@ -137,7 +156,7 @@ impl Rebac {
 
 
     pub async fn delete_permission(&self, current_user: u64, target_user: u64, obj_id: RebacKey,
-                                permission_type: PermissionType) -> Result<(), String> {
+                                permission_type: PermissionType, version: Option<u64>) -> Result<(), String> {
         let required_user_permission = self.to_grant_mapping.get(&permission_type)
             .ok_or("permission cannot be revoked")?;
 
@@ -145,15 +164,24 @@ impl Rebac {
             return Err("access denied".to_string());
         }
 
-        retry_fn(|| self.delete_permission_impl(target_user, obj_id, permission_type))
+        retry_fn(|| self.delete_permission_impl(target_user, obj_id, permission_type, version))
             .retries(3)
             .custom_backoff(FixedBackoffWithJitter::new(Duration::from_secs(1), 30))
             .await
     }
 
+    pub async fn delete_permission_without_rights_check(&self, target_user: u64, obj_id: RebacKey,
+                                   permission_type: PermissionType, version: Option<u64>) -> Result<(), String> {
+        retry_fn(|| self.delete_permission_impl(target_user, obj_id, permission_type, version))
+            .retries(3)
+            .custom_backoff(FixedBackoffWithJitter::new(Duration::from_secs(1), 30))
+            .await
+    }
+
+
     pub async fn put_permission_without_rights_check(&self, target_user: u64, obj_id: RebacKey,
-                                permission_type: PermissionType) -> Result<(), String> {
-        retry_fn(|| self.put_permission_impl(target_user, obj_id, permission_type))
+                                permission_type: PermissionType, version: Option<u64>) -> Result<(), String> {
+        retry_fn(|| self.put_permission_impl(target_user, obj_id, permission_type, version))
             .retries(3)
             .custom_backoff(FixedBackoffWithJitter::new(Duration::from_secs(1), 30))
             .await

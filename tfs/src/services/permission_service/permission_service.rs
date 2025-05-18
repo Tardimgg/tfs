@@ -102,7 +102,7 @@ impl PermissionService {
     }
 
     pub async fn put_permission(&self, current_user: u64, target_user: String, obj_type: ObjType,
-                                obj_id: u64, permission_type: PermissionType) -> Result<(), String> {
+                                obj_id: u64, permission_type: PermissionType, version: Option<u64>) -> Result<(), String> {
         let target_uid = self.fs_helper.find_uid(&target_user).await?;
         if let None = target_uid {
             return Err("the user does not exist".to_string())
@@ -110,11 +110,11 @@ impl PermissionService {
         let target_uid = target_uid.unwrap();
 
         let key = RebacKey::new(obj_type, obj_id);
-        self.rebac.put_permission(current_user, target_uid, key, permission_type).await
+        self.rebac.put_permission(current_user, target_uid, key, permission_type, version).await
     }
 
     pub async fn delete_permission(&self, current_user: u64, target_user: String, obj_type: ObjType,
-                                obj_id: u64, permission_type: PermissionType) -> Result<(), String> {
+                                obj_id: u64, permission_type: PermissionType, version: Option<u64>) -> Result<(), String> {
         let target_uid = self.fs_helper.find_uid(&target_user).await?;
         if let None = target_uid {
             return Err("the user does not exist".to_string())
@@ -122,13 +122,19 @@ impl PermissionService {
         let target_uid = target_uid.unwrap();
 
         let key = RebacKey::new(obj_type, obj_id);
-        self.rebac.delete_permission(current_user, target_uid, key, permission_type).await
+        self.rebac.delete_permission(current_user, target_uid, key, permission_type, version).await
+    }
+
+    pub async fn delete_permission_without_rights_check(&self, target_user: u64, obj_type: ObjType,
+                                                     obj_id: u64, permission_type: PermissionType, version: Option<u64>) -> Result<(), String> {
+        let key = RebacKey::new(obj_type, obj_id);
+        self.rebac.delete_permission_without_rights_check(target_user, key, permission_type, version).await
     }
 
     pub async fn put_permission_without_rights_check(&self, target_user: u64, obj_type: ObjType,
-                                obj_id: u64, permission_type: PermissionType) -> Result<(), String> {
+                                obj_id: u64, permission_type: PermissionType, version: Option<u64>) -> Result<(), String> {
         let key = RebacKey::new(obj_type, obj_id);
-        self.rebac.put_permission_without_rights_check(target_user, key, permission_type).await
+        self.rebac.put_permission_without_rights_check(target_user, key, permission_type, version).await
     }
 }
 
@@ -149,13 +155,6 @@ fn build_permissive_permissions_map(fs_helper: Arc<dyn FsHelper + Send + Sync>, 
         }), PermissionType::WriteRecursively)
     ]);
 
-    permissive_permissions.insert(PermissionType::ReadPermissionsOfOtherUsers, vec![
-        (Box::new(AncestorsRebacKeyReceiver {
-            fs_helper: fs_helper.clone(),
-            obj_type: ObjType::File
-        }), PermissionType::ReadPermissionsOfOtherUsersRecursively)
-    ]);
-
     permissive_permissions.insert(PermissionType::GrantRead, vec![
         (Box::new(AncestorsRebacKeyReceiver {
             fs_helper: fs_helper.clone(),
@@ -168,6 +167,34 @@ fn build_permissive_permissions_map(fs_helper: Arc<dyn FsHelper + Send + Sync>, 
             fs_helper: fs_helper.clone(),
             obj_type: ObjType::File
         }), PermissionType::GrantWriteRecursively)
+    ]);
+
+    permissive_permissions.insert(PermissionType::GrantReadRecursively, vec![
+        (Box::new(AncestorsRebacKeyReceiver {
+            fs_helper: fs_helper.clone(),
+            obj_type: ObjType::File
+        }), PermissionType::GrantReadRecursively)
+    ]);
+
+    permissive_permissions.insert(PermissionType::GrantWriteRecursively, vec![
+        (Box::new(AncestorsRebacKeyReceiver {
+            fs_helper: fs_helper.clone(),
+            obj_type: ObjType::File
+        }), PermissionType::GrantWriteRecursively)
+    ]);
+
+    permissive_permissions.insert(PermissionType::ReadPermissionsOfOtherUsers, vec![
+        (Box::new(AncestorsRebacKeyReceiver {
+            fs_helper: fs_helper.clone(),
+            obj_type: ObjType::File
+        }), PermissionType::ReadPermissionsOfOtherUsersRecursively)
+    ]);
+
+    permissive_permissions.insert(PermissionType::ReadPermissionsOfOtherUsersRecursively, vec![
+        (Box::new(AncestorsRebacKeyReceiver {
+            fs_helper: fs_helper.clone(),
+            obj_type: ObjType::File
+        }), PermissionType::ReadPermissionsOfOtherUsersRecursively)
     ]);
 
     for permission_type in PermissionType::iter() {

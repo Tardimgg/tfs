@@ -40,7 +40,7 @@ async fn put_permission(user: AuthenticatedUser, path: web::Path<(String, ObjTyp
     let permission_type = path.3;
 
     permission_service.get_ref().put_permission(user.uid, target_user,
-                                                obj_type, obj_id, permission_type).await?;
+                                                obj_type, obj_id, permission_type, None).await?;
     Ok(HttpResponse::Ok().finish())
 }
 
@@ -54,7 +54,7 @@ async fn delete_permission(user: AuthenticatedUser, path: web::Path<(String, Obj
     let permission_type = path.3;
 
     permission_service.get_ref().delete_permission(user.uid, target_user,
-                                                obj_type, obj_id, permission_type).await?;
+                                                obj_type, obj_id, permission_type, None).await?;
     Ok(HttpResponse::Ok().finish())
 }
 

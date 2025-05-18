@@ -1,0 +1,11 @@
+<h1 mat-dialog-title>Модификация файла</h1>
+<div mat-dialog-content>
+  <h4 class="text-base text-black truncate">Файл: {{filename}}</h4>
+
+</div>
+
+
+<div mat-dialog-actions>
+  <button mat-button mat-dialog-close style="color: black">Отменить изменения</button>
+  <button mat-raised-button style="background-color: green;  color: #fff;" (click)="save()">Сохранить изменения</button>
+</div>

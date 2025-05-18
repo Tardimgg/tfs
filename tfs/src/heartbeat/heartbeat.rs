@@ -11,7 +11,7 @@ use dashmap::DashMap;
 use futures::future::join_all;
 use futures::{StreamExt, TryStreamExt};
 use itertools::Itertools;
-use log::{debug, error};
+use log::{debug, error, info};
 use rand::Rng;
 use rand::rngs::ThreadRng;
 use sha2::{Digest, Sha256};
@@ -33,7 +33,7 @@ use crate::services::file_storage::file_storage::{FileStorage, FileStream};
 use crate::services::file_storage::model::{ChunkVersion, FileSaveOptions, NodeType};
 use crate::services::internal_communication::InternalCommunication;
 use crate::services::permission_service::permission_service::PermissionService;
-use crate::services::virtual_fs::models::{FileKeeper, Folder, FsNode, FsNodeType, StoredFile, StoredFileRangeEnd};
+use crate::services::virtual_fs::models::{FileKeeper, Folder, FsNode, FsNodeType, GlobalFileInfo, StoredFile, StoredFileRangeEnd};
 use crate::services::virtual_fs::virtual_fs::VirtualFS;
 // static dht: DistributedMap = 0;
 
@@ -217,7 +217,8 @@ impl Heartbeat {
             let folder_id = u64::from_str(&self.config.get_val(folder_id_key).await).unwrap();
 
             self.permission_service.put_permission_without_rights_check(service_uid, ObjType::Folder,
-                                                                        folder_id, PermissionType::All
+                                                                        folder_id, PermissionType::All,
+                                                                        Some(0)
             ).await?
         }
 
@@ -290,6 +291,7 @@ impl Heartbeat {
             return keepers;
         });
         debug!("keepers: {:?}", keepers_result);
+        info!("replication has started");
         // тут замечаем слишком старые версии и перестаем их обновлять
 
         let replication_factor = u32::from_str(&self.config.get_val(ConfigKey::ReplicationFactor).await).unwrap();
@@ -313,11 +315,13 @@ impl Heartbeat {
                     .err().iter().for_each(|v| error!("{v}"))
             }
         }
+        info!("replication is complete");
+
 
         Ok(())
     }
 
-    async fn reinit_rebac_rule(&self, path: &str) -> Result<(), String>{
+    async fn reinit_rebac_rule(&self, path: &str) -> Result<(), String> {
         let (range, stream) = self.get_all_file(path).await?;
         let rebac_rule_string = read_stream_to_string(stream.get_stream()).await?;
         let rebac_rule = serde_json::from_str::<FsNode>(&rebac_rule_string).default_res()?;
@@ -328,9 +332,17 @@ impl Heartbeat {
 
             let stored_permissions = self.permission_service.get_permissions(permission.subject, obj_type, obj_id)
                 .await?;
-            if !stored_permissions.contains(&permission.permission_type) {
-                self.permission_service.put_permission_without_rights_check(permission.subject, obj_type, obj_id, permission.permission_type).await?
+            if !stored_permissions.contains(&permission.permission_type) && !permission.deleted {
+                self.permission_service.put_permission_without_rights_check(
+                    permission.subject, obj_type, obj_id, permission.permission_type, Some(permission.version)
+                ).await?;
             }
+            if permission.deleted {
+                self.permission_service.delete_permission_without_rights_check(
+                    permission.subject, obj_type, obj_id, permission.permission_type, Some(permission.version)
+                ).await?;
+            }
+
             Ok(())
         } else {
             Err("invalid file type when reinit_rebac_rule".to_string())
@@ -408,7 +420,9 @@ impl Heartbeat {
 
         let mut self_updated = false;
         let self_stored = self.storage.get_file_meta(path).await.default_res()?; // тут нужно чет делать, просто откидывать не вариант
-        if let Ok(meta) = self.fs.get_node_meta(path).await {
+        let meta = self.fs.get_node_meta(path).await;
+        if meta.is_ok() && !meta.as_ref().unwrap().keepers.is_empty() {
+            let meta = meta.unwrap();
 
             let global_max = meta.keepers.iter()
                 .flat_map(|v| &v.data)

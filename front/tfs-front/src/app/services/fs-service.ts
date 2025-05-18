@@ -25,6 +25,7 @@ import {
 } from '../entities/responses/file-info-response';
 import {Folder, FsNodeMeta} from '../components/fs/fs.component';
 import {PermissionService} from './permission-service';
+import {BalancerService} from './balancer.service';
 
 @Injectable({
   providedIn: 'root'
@@ -35,16 +36,16 @@ export class FsService {
   // private url = document.location.hostname + '/api/auth/api/';
   // private url = 'http://127.0.0.1:8080/virtual_fs';
   // private url = 'https://10.42.0.212:8081';
-  private url = 'https://158.160.98.131:8081';
+  // private url = 'https://158.160.98.131:8081';
 
-  constructor(private client: HttpClient, private authService: AuthService) { }
+  constructor(private client: HttpClient, private authService: AuthService, private balancerService: BalancerService) { }
 
 
   public createFile(path: string, files: File[]) {
     let token = this.authService.getToken();
 
     for (let file of files) {
-      this.client.put(this.url + "/virtual_fs/file" + path + "/" + file.name, file, {
+      this.client.put(this.balancerService.getIP() + "/virtual_fs/file" + path + "/" + file.name, file, {
         headers: {
           "Authorization": token == null ? "" : token
         }
@@ -57,7 +58,7 @@ export class FsService {
   public createFolder(rootFolder: string, folderName: string) {
     let token = this.authService.getToken();
 
-    this.client.post(this.url + '/virtual_fs/folder' + rootFolder + '/' + folderName, {}, {
+    this.client.post(this.balancerService.getIP() + '/virtual_fs/folder' + rootFolder + '/' + folderName, {}, {
       headers: {
         "Authorization": token == null ? "" : token
       }
@@ -65,6 +66,19 @@ export class FsService {
       (r)=>{console.log('got r', r)}
     )
   }
+
+  public deleteFile(path: string) {
+    let token = this.authService.getToken();
+
+    this.client.delete(this.balancerService.getIP() + '/virtual_fs/file' + path, {
+      headers: {
+        "Authorization": token == null ? "" : token
+      }
+    }).subscribe(
+      (r)=>{console.log('got r', r)}
+    )
+  }
+
 
   makeid(length: number) {
     let result           = '';
@@ -79,7 +93,7 @@ export class FsService {
   public getDataSource(totalSize: number, dataId: string) {
     let token = this.authService.getToken();
 
-    return this.client.get(this.url + "/virtual_fs/file/data_meta/" + dataId, {
+    return this.client.get(this.balancerService.getIP() + "/virtual_fs/file/data_meta/" + dataId, {
       headers: {
         "Authorization": token == null ? "" : token
       }
@@ -99,8 +113,10 @@ export class FsService {
   public getFile(path: string, progress: ((progress: number, total: number) => void)) {
     let token = this.authService.getToken();
 
+    // let file = await this.getNodeMeta(path);
+    // file.
 
-    let task: Observable<string | void> = this.client.get(this.url + "/virtual_fs/file" + path, {
+    let task: Observable<string | void> = this.client.get(this.balancerService.getIP() + "/virtual_fs/file" + path, {
       headers: {
         "Authorization": token == null ? "" : token
       }
@@ -141,7 +157,7 @@ export class FsService {
           chunks.sort((a, b) => a.range[0] - b.range[0])
           let total = chunks[chunks.length - 1].range[1];
           for (let chunk of chunks) {
-            await fetch(this.url + '/virtual_fs/file/data/' + chunk.key.hash + "_" +  chunk.key.hash_local_id, {
+            await fetch(this.balancerService.getIP() + '/virtual_fs/file/data/' + chunk.key.hash + "_" +  chunk.key.hash_local_id, {
               headers: {
                 "Authorization": token == null ? "" : token
               }
@@ -356,7 +372,7 @@ export class FsService {
 
   public uploadFile(path: string, file: File) {
     let token = this.authService.getToken();
-    return this.client.put(this.url + "/virtual_fs/file" + path + "/" + file.name, file, {
+    return this.client.put(this.balancerService.getIP() + "/virtual_fs/file" + path + "/" + file.name, file, {
       headers: {
         "Authorization": token == null ? "" : token
       },
@@ -366,7 +382,7 @@ export class FsService {
 
   public async getNodeMeta(path: string) {
     let token = this.authService.getToken();
-    let node = await fetch(this.url + "/virtual_fs/meta/node" + path, {
+    let node = await fetch(this.balancerService.getIP() + "/virtual_fs/meta/node" + path, {
       headers: {
         "Authorization": token == null ? "" : token
       }
@@ -393,7 +409,7 @@ export class FsService {
 
   public async getFolder(path: string): Promise<Folder> {
     let token = this.authService.getToken();
-    const response = await fetch(this.url + "/virtual_fs/folder" + path, this.authHeader());
+    const response = await fetch(this.balancerService.getIP() + "/virtual_fs/folder" + path, this.authHeader());
 
     if (response.status == 403) {
       return {

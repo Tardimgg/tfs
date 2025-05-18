@@ -2,6 +2,7 @@ import {EventEmitter, Injectable} from '@angular/core';
 import {HttpClient} from '@angular/common/http';
 import {LoginResponse} from "../entities/responses/login_response";
 import {UserTokens} from '../entities/user_token';
+import {BalancerService} from './balancer.service';
 
 @Injectable({
   providedIn: 'root'
@@ -12,10 +13,10 @@ export class AuthService {
   // private url = document.location.hostname + '/api/auth/api/';
   // private url = 'http://127.0.0.1:8080/user';
   // private url = 'https://10.42.0.212:8081/user';
-  private url = 'https://158.160.98.131:8081/user';
+  // private url = 'https://158.160.98.131:8081/user';
 
 
-  constructor(private httpClient: HttpClient) { }
+  constructor(private httpClient: HttpClient, private balancerService: BalancerService) { }
 
   loginEmitter = new EventEmitter<string>();
 
@@ -85,14 +86,14 @@ export class AuthService {
 
 
   login(login: string, password: string) {
-    return this.httpClient.post<UserTokens>(this.url + "/auth", {
+    return this.httpClient.post<UserTokens>(this.balancerService.getIP() + "/user/auth", {
       login: login,
       password: password
     });
   }
 
   registration(login: string, password: string, email: string){
-    return this.httpClient.post<LoginResponse>(this.url, {
+    return this.httpClient.post<LoginResponse>(this.balancerService.getIP() + "/user", {
       login: login,
       password: password,
     });

@@ -118,7 +118,8 @@ impl UserService {
         let home = self.config.get_val(ConfigKey::HomePath).await;
         let user_folder = format!("{}/{}", home, user_login);
         let folder = self.virtual_fs.create_folder(&user_folder).await.default_res()?;
-        self.permission_service.put_permission_without_rights_check(user.uid, ObjType::Folder, folder.id, PermissionType::All)
+        self.permission_service.put_permission_without_rights_check(user.uid, ObjType::Folder, folder.id,
+                                                                    PermissionType::All, None)
             .await
     }
 

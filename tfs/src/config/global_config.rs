@@ -82,7 +82,7 @@ impl ConfigKey {
             ConfigKey::HomePath => "home".to_string(),
             ConfigKey::RebacPath => "rebac".to_string(),
             ConfigKey::NumberOfStoredVersions => "5".to_string(),
-            ConfigKey::CacheTTLInSeconds => (60 * 10).to_string(),
+            ConfigKey::CacheTTLInSeconds => (60 * 1).to_string(),
             ConfigKey::CacheCapacity => "1000".to_string(),
             ConfigKey::UsersPath => "users".to_string(),
             ConfigKey::FsNodeIdMappingPath => "node_id_mapping".to_string(),

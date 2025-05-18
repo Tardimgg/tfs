@@ -210,6 +210,36 @@ export class PermissionManagementComponent {
       }
     }
 
+    let flag = false;
+    for (let user of this.userPermissionsToDelete) {
+      for (let newPermissions of this.displayedNewPermissions) {
+        if (user == newPermissions[0]) {
+          let init = this.initialPermissions.get(user);
+          if (init != undefined) {
+            let newPermissionsSet = new Set(newPermissions[1]);
+
+            for (let initPermission of init) {
+              if (!newPermissionsSet.has(initPermission)) {
+                this.permissionService.deletePermission(user, this.objType, this.objId, initPermission);
+              }
+            }
+          }
+
+
+          flag = true;
+          break;
+        }
+      }
+      if (!flag) {
+        let init = this.initialPermissions.get(user);
+        if (init != undefined) {
+          for (let initPermission of init) {
+            this.permissionService.deletePermission(user, this.objType, this.objId, initPermission);
+          }
+        }
+      }
+    }
+
     this.dialogRef.close();
   }
 

@@ -31,7 +31,7 @@ export class PermissionControllerComponent {
   constructor(
     public dialogRef: MatDialogRef<PermissionControllerComponent>,
     @Inject(MAT_DIALOG_DATA) public data: object,
-    public permissionService: PermissionService,   private cdr: ChangeDetectorRef) {
+    public permissionService: PermissionService) {
     this.dialogRef.updateSize('30%', '60%');
 
 

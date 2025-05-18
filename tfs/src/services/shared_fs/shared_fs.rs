@@ -78,7 +78,7 @@ impl SharedFS {
     }
 
     pub async fn create_folder(&self, current_user: AuthenticatedUser, path: &str) -> Result<(), CreateFolderError> {
-        let has_permission = self.check_root_folder(current_user, path)
+        let has_permission = self.check_root_folder(current_user, path, PermissionType::Write)
             .await
             .map_err(|v| CreateFolderError::InternalError(v))?;
 
@@ -146,7 +146,7 @@ impl SharedFS {
 
     pub async fn put_user_file(&self, current_user: AuthenticatedUser, path: &str,
                                data: FileStream, range_o: Option<Range>) -> Result<FileMeta, FileSavingError> {
-        let has_permission = self.check_root_folder(current_user, path)
+        let has_permission = self.check_root_folder(current_user, path, PermissionType::Write)
             .await
             .map_err(|v| FileSavingError::Other(v))?;
 
@@ -157,14 +157,15 @@ impl SharedFS {
         }
     }
 
-    async fn check_root_folder(&self, current_user: AuthenticatedUser, path: &str) -> Result<bool, String> {
+    async fn check_root_folder(&self, current_user: AuthenticatedUser, path: &str,
+                               permission_type: PermissionType) -> Result<bool, String> {
         let mut path_buf = PathBuf::from(path);
         path_buf.pop();
 
         let root_node = self.get_node_meta(current_user, path_buf.to_str().unwrap())
             .await
             .default_res()?;
-        self.permission_service.check_permission(current_user.uid, ObjType::Folder, root_node.id, PermissionType::Read).await
+        self.permission_service.check_permission(current_user.uid, ObjType::Folder, root_node.id, permission_type).await
     }
 
     async fn user_is_instance_of_service(&self, current_user: AuthenticatedUser) -> bool {

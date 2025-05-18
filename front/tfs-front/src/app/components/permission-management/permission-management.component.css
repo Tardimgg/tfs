@@ -73,3 +73,11 @@
   background-color: #f3fdf7;
   /*color: #fff;*/
 }
+
+
+.truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 30em;
+}
