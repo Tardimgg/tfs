@@ -1,4 +1,4 @@
-import {ChangeDetectorRef, Component, Inject} from '@angular/core';
+import {Component, Inject} from '@angular/core';
 import {MAT_DIALOG_DATA, MatDialogModule, MatDialogRef} from '@angular/material/dialog';
 import {PermissionService} from '../../services/permission-service';
 import {MatSelectModule} from '@angular/material/select';
@@ -6,6 +6,9 @@ import {CommonModule, NgFor} from '@angular/common';
 import {MatButtonModule} from '@angular/material/button';
 import {MatInputModule} from '@angular/material/input';
 import {FormsModule} from '@angular/forms';
+import {castFileChangeTypeToE, FileChange, FileChangeType} from '../../entities/file-change';
+import {timer} from 'rxjs';
+import {FsService} from '../../services/fs-service';
 
 @Component({
   selector: 'app-file-modification',
@@ -15,19 +18,35 @@ import {FormsModule} from '@angular/forms';
 })
 export class FileModificationComponent {
 
+  operation: string = "add";
   filename: string;
+  filesize: bigint;
+  changes: [FileChange] = [new FileChange(FileChangeType.Add)]
   constructor(
     public dialogRef: MatDialogRef<FileModificationComponent>,
     @Inject(MAT_DIALOG_DATA) public data: object,
-    public permissionService: PermissionService) {
-    this.dialogRef.updateSize('60%', '60%');
+    public permissionService: PermissionService,
+    private fsService: FsService) {
+    this.dialogRef.updateSize('60%', '65%');
 
     this.filename = "filename" in data ? data["filename"] as string : "";
+    this.filesize = BigInt(0);
 
+    timer(0)
+      .subscribe(async(_) => {
+        let node = await this.fsService.getNodeMeta(this.filename);
+        
+        // node.
 
+      });
   }
+
+
 
   save() {
 
   }
+
+  protected readonly castFileChangeTypeToE = castFileChangeTypeToE;
+  protected readonly BigInt = BigInt;
 }

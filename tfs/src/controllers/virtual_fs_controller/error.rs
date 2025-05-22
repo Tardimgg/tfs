@@ -43,6 +43,16 @@ impl From<FileReadingError> for ApiException {
     }
 }
 
+impl From<FileDeletingError> for ApiException {
+    fn from(value: FileDeletingError) -> Self {
+        match value {
+            FileDeletingError::NotExist => FileNotFound,
+            FileDeletingError::Other(v) => InternalError(v),
+            FileDeletingError::AccessDenied(v) => Forbidden(v)
+        }
+    }
+}
+
 impl From<CreateFolderError> for ApiException {
     fn from(value: CreateFolderError) -> Self {
         match value {

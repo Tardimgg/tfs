@@ -16,6 +16,16 @@ pub enum FileSavingError {
     AccessDenied(String)
 }
 
+#[derive(Error, Debug)]
+pub enum FileDeletingError {
+    #[error("Not Exist")]
+    NotExist,
+    #[error("Other error: {0}")]
+    Other(String),
+    #[error("access denied: {0}")]
+    AccessDenied(String)
+}
+
 pub enum ChunkSavingExistingError {
     NotExist,
     SavingError(FileSavingError),
@@ -38,6 +48,12 @@ impl From<FileSavingError> for ChunkSavingExistingError {
 impl From<String> for FileSavingError {
     fn from(value: String) -> Self {
         FileSavingError::Other(value)
+    }
+}
+
+impl From<String> for FileDeletingError {
+    fn from(value: String) -> Self {
+        FileDeletingError::Other(value)
     }
 }
 

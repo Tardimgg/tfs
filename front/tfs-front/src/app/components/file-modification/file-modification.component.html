@@ -2,6 +2,54 @@
 <div mat-dialog-content>
   <h4 class="text-base text-black truncate">Файл: {{filename}}</h4>
 
+  <div class="rectangle mt-1 mb-1 flex flex-row items-center">
+    <h3 class="table-cell align-middle text-center text-2xl m-1 all_width">{{filesize}} байт</h3>
+  </div>
+
+  <h2 class="font-extrabold mt-2 text-lg">Метод модификации</h2>
+  <mat-select class="mt-2" name="operation" [(ngModel)]="operation">
+    <mat-option value="add">Добавить сегмент</mat-option>
+    <mat-option value="replace">Заменить сегмент</mat-option>
+    <mat-option value="delete">Удалить сегмент</mat-option>
+  </mat-select>
+
+  <h2 class="font-extrabold mt-2 text-lg">Параметры метода модификации</h2>
+
+  <!--  <mat-select class="mt-2" [(value)]="isPublic">-->
+<!--    <mat-option [value]="false">Общий доступ ограничен</mat-option>-->
+<!--    <mat-option [value]="true">Доступен всем</mat-option>-->
+<!--  </mat-select>-->
+
+  <div class="mt-3" [ngSwitch]="operation">
+
+    <div class="mt-3" *ngSwitchCase="'add'">
+      <span class="text-base text-black truncate">От байта:</span>
+      <input class="ml-2 text-base text-black" style="width: 84.4%" type="number" [defaultValue]="1" min="1" max="{{filesize + BigInt(1)}}">
+      <br/>
+      <span class="text-base text-black">Добавляемый сегмент: </span>
+      <input type="file" />
+    </div>
+
+    <div class="mt-3" *ngSwitchCase="'replace'">
+      <span class="text-base text-black all_width">Первый заменяемый байт:</span>
+      <input class="ml-2 text-base text-black" style="width: 57.6%" type="number" [defaultValue]="1" min="1" max="{{filesize}}">
+      <br/>
+      <span class="text-base text-black">Заменяющий сегмент: </span>
+      <input type="file" />
+    </div>
+
+    <div class="mt-3" *ngSwitchCase="'delete'">
+<!--      <h3 class="text-base text-black text-center">Удалить сегмент</h3>-->
+      <span class="text-base text-black all_width">Первый удаляемый байт:</span>
+      <input class="ml-2 text-base text-black" style="width: 59.9%" type="number" [defaultValue]="1" min="1" max="{{filesize}}">
+      <br/>
+      <span class="text-base text-black all_width">Последний удаляемый байт:</span>
+      <input class="ml-2 text-base text-black" style="width: 55.0%" type="number" [defaultValue]="1" min="1" max="{{filesize}}">
+
+    </div>
+  </div>
+
+
 </div>
 
 

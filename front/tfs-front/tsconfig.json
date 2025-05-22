@@ -20,7 +20,8 @@
     "lib": [
       "webworker",
       "es2015",
-      "dom"
+      "dom",
+      "esnext"
     ]
   },
   "angularCompilerOptions": {

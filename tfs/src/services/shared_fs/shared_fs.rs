@@ -11,7 +11,7 @@ use crate::common::default_error::DefaultError;
 use crate::common::exceptions::NodeMetaReceivingError;
 use crate::common::models::{FolderContent, FolderContentE, ObjType, PermissionType};
 use crate::config::global_config::{ConfigKey, GlobalConfig};
-use crate::services::file_storage::errors::{ChunkSavingExistingError, CreateFolderError, FileReadingError, FileSavingError, FolderReadingError};
+use crate::services::file_storage::errors::{ChunkSavingExistingError, CreateFolderError, FileDeletingError, FileReadingError, FileSavingError, FolderReadingError};
 use crate::services::file_storage::file_storage::FileStream;
 use crate::services::file_storage::model::{FileMeta, FolderMeta};
 use crate::services::permission_service::permission_service::PermissionService;
@@ -154,6 +154,18 @@ impl SharedFS {
             self.virtual_fs.put_user_file(path, data, range_o).await
         } else {
             Err(FileSavingError::AccessDenied("".to_string()))
+        }
+    }
+
+    pub async fn delete_user_file(&self, current_user: AuthenticatedUser, path: &str) -> Result<(), FileDeletingError> {
+        let has_permission = self.check_root_folder(current_user, path, PermissionType::Write)
+            .await
+            .map_err(|v| FileDeletingError::Other(v))?;
+
+        if has_permission {
+            self.virtual_fs.delete_user_file(path).await
+        } else {
+            Err(FileDeletingError::AccessDenied("".to_string()))
         }
     }
 

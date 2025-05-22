@@ -697,7 +697,38 @@ impl VirtualFS {
 
     }
 
+    pub async fn delete_user_file(&self, path: &str) -> Result<(), FileDeletingError> {
+        if !path.starts_with(&self.config.get_val(ConfigKey::HomePath).await) {
+            return Err(FileDeletingError::AccessDenied("no rights to write to the specified folder".to_string()))
+        }
 
+        let file_path = PathBuf::from(path);
+        if let Some(node_type) = self.check_exist(&file_path).await.default_res()? {
+            if node_type != FsNodeType::File {
+                return Err(FileDeletingError::Other(format!("{:?} is not a file", &file_path)));
+            }
+        } else {
+            return Err(FileDeletingError::Other(format!("file {:?} does not exist", &file_path)))
+        }
+
+        let file = self.delete_file(path).await?;
+
+        retry_fn(|| self.delete_file_from_folder(path))
+            .retries(3)
+            .custom_backoff(LinearBackoffWithJitter::new(Duration::from_secs(1), 2, 30))
+            .await
+            .map_err(|err| format!("couldn't save file to folder. child err: {err}"))?;
+
+        Ok(())
+    }
+
+    async fn delete_file(&self, path: &str) -> Result<(), String>{
+        todo!("delete file")
+    }
+
+    async fn delete_file_from_folder(&self, path: &str) -> Result<(), String> {
+        todo!("delete file from folder")
+    }
 
     pub async fn put_user_file(&self, path: &str, data: FileStream, range_o: Option<Range>) -> Result<FileMeta, FileSavingError> {
         if !path.starts_with(&self.config.get_val(ConfigKey::HomePath).await) {
@@ -723,8 +754,8 @@ impl VirtualFS {
             .map_err(|err| format!("couldn't save file to folder. child err: {err}"))?;
 
         Ok(file)
-
     }
+
     pub async fn put_file(&self, path: &str, data: FileStream, range_o: Option<Range>) -> Result<FileMeta, FileSavingError> {
         // if self.check_exist(Path::new(path)).await.default_res()?.is_some() {
         //     return Err(FileSavingError::AlreadyExist);

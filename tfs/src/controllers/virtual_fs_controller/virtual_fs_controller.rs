@@ -86,10 +86,9 @@ async fn create_file(user: AuthenticatedUser, filename: web::Path<String>, paylo
 }
 
 #[delete("/file/{tail:.*}")]
-async fn delete_file(user: AuthenticatedUser, filename: web::Path<String>, payload: web::Payload, req: HttpRequest, fs: web::Data<Arc<SharedFS>>) -> Result<Json<FileMeta>, ApiException> {
-    todo!("delete file");
-    // let meta =  fs.get_ref().put_user_file(user, &filename, FileStream::Payload(payload), None).await?;
-    // Ok(web::Json(meta))
+async fn delete_file(user: AuthenticatedUser, filename: web::Path<String>, req: HttpRequest, fs: web::Data<Arc<SharedFS>>) -> Result<Json<()>, ApiException> {
+    let meta = fs.get_ref().delete_user_file(user, &filename).await?;
+    Ok(web::Json(meta))
 }
 
 #[patch("/file/{tail:.*}")]
