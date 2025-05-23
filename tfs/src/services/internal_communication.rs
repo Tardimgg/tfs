@@ -51,6 +51,7 @@ impl InternalCommunication {
             FileStream::StringData(_) => { panic!() }
             // FileStream::Stream(s) => s
             FileStream::ReceiverStream(_) => { panic!() }
+            FileStream::DownloadStream(_) => { panic!() }
         };
 
         // let response = self.client.put(format!("http://{}:{}/virtual_fs/file/{}", node.ip, node.port, filename))

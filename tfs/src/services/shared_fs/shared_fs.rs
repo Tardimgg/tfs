@@ -15,7 +15,7 @@ use crate::services::file_storage::errors::{ChunkSavingExistingError, CreateFold
 use crate::services::file_storage::file_storage::FileStream;
 use crate::services::file_storage::model::{FileMeta, FolderMeta};
 use crate::services::permission_service::permission_service::PermissionService;
-use crate::services::virtual_fs::models::{FsNodeType, GlobalFileInfo, StoredFile};
+use crate::services::virtual_fs::models::{File, FsNodeType, GlobalFileInfo, StoredFile};
 use crate::services::virtual_fs::virtual_fs::VirtualFS;
 
 #[derive(TypedBuilder)]
@@ -115,6 +115,22 @@ impl SharedFS {
         } else {
             Err(NodeMetaReceivingError::AccessDenied)
         }
+    }
+
+    pub async fn get_file_meta(&self, current_user: AuthenticatedUser, path: &str) -> Result<Option<File>, FileReadingError> {
+        // temp code. data must be processed through a regular pipeline
+        let home_path = self.config.get_val(ConfigKey::HomePath).await;
+        if !path.starts_with(&home_path) {
+            return Err(FileReadingError::BadRequest)
+        }
+        if let Err(err) = self.get_node_meta(current_user, path).await {
+            return match err {
+                NodeMetaReceivingError::NotFound => Err(FileReadingError::NotExist),
+                NodeMetaReceivingError::InternalError(v) => Err(FileReadingError::InternalError(v)),
+                NodeMetaReceivingError::AccessDenied => Err(FileReadingError::AccessDenied)
+            }
+        }
+        self.virtual_fs.get_file_meta(path).await
     }
 
     pub async fn get_file_content(&self, current_user: AuthenticatedUser, path: &str,

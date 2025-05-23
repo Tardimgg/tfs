@@ -25,7 +25,7 @@ use crate::common::models::{FolderContent, FolderContentE};
 use crate::services::file_storage::file_storage::FileStream;
 use crate::services::file_storage::model::{FileMeta, FolderMeta, NodeType};
 use crate::services::shared_fs::shared_fs::SharedFS;
-use crate::services::virtual_fs::models::{FsNodeType, GlobalFileInfo};
+use crate::services::virtual_fs::models::{File, FsNodeType, GlobalFileInfo};
 use crate::services::virtual_fs::virtual_fs::VirtualFS;
 
 #[derive(Serialize, Deserialize)]
@@ -45,7 +45,7 @@ async fn create_folder(user: AuthenticatedUser, folder_path: web::Path<String>, 
 }
 
 #[get("/meta/node/{tail:.*}")]
-async fn get_file_meta(user: AuthenticatedUser, file_path: web::Path<String>, fs: web::Data<Arc<SharedFS>>) -> Result<Json<GlobalFileInfo>, ApiException> {
+async fn get_node_meta(user: AuthenticatedUser, file_path: web::Path<String>, fs: web::Data<Arc<SharedFS>>) -> Result<Json<GlobalFileInfo>, ApiException> {
     let res = fs.get_ref().get_node_meta(user, &file_path).await?;
     Ok(web::Json(res))
 }
@@ -54,6 +54,17 @@ async fn get_file_meta(user: AuthenticatedUser, file_path: web::Path<String>, fs
 async fn get_stored_parts(user: AuthenticatedUser, filepath: web::Path<String>, req: HttpRequest, fs: web::Data<Arc<SharedFS>>) -> Result<impl Responder, ApiException> {
     let meta = fs.get_ref().get_stored_parts_meta(user, &filepath).await.map_err(|v| ApiException::InternalError(v))?;
     Ok(web::Json(meta))
+}
+
+#[get("/file_meta/{tail:.*}")]
+async fn get_file_meta(user: AuthenticatedUser, file_path: web::Path<String>,
+                          req: HttpRequest, fs: web::Data<Arc<SharedFS>>) -> Result<Json<File>, ApiException> {
+    let mut file_o = fs.get_ref().get_file_meta(user, &file_path).await?;
+    if let Some(file) = file_o {
+        Ok(web::Json(file))
+    } else {
+        Err(ApiException::NotFound)
+    }
 
 }
 
@@ -73,6 +84,7 @@ async fn get_file(user: AuthenticatedUser, file_path: web::Path<String>,
 
     let mut file_o = fs.get_ref().get_file_content(user, &file_path, range_o).await?;
     if let Some(file) = file_o {
+        // тут вообще не обязательно возвращается json
         return Ok(HttpResponse::Ok().content_type(ContentType::json()).streaming(file.get_stream()))
     }
     // HttpResponse::PartialContent().
@@ -133,9 +145,10 @@ pub fn config() -> Scope {
         .service(get_folder)
         .service(create_folder)
         .service(get_file)
+        .service(get_file_meta)
         .service(delete_file)
         .service(get_stored_parts)
-        .service(get_file_meta)
+        .service(get_node_meta)
         .service(create_file)
         .service(save_existing_chunk)
 }

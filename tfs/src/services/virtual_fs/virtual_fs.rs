@@ -194,6 +194,48 @@ impl VirtualFS {
         }
     }
 
+    pub async fn get_file_meta(&self, path: &str) -> Result<Option<File>, FileReadingError> {
+        let node_stream = self.get_node_stream(path).await;
+
+        let json_str = read_stream_to_string(node_stream?.get_stream())
+            .await
+            .default_logging_res("read file meta stream to string: ")?;
+
+        let fs_node = serde_json::from_str::<FsNode>(&json_str).default_logging_res("virtual_fs")?;
+
+        if let FsNode::File(file) = fs_node {
+            Ok(Some(file))
+        } else {
+            Err(FileReadingError::BadRequest)
+        }
+    }
+
+    async fn get_node_stream(&self, path: &str) -> Result<FileStream, FileReadingError> {
+        let json = self.dht_map.get(path).await.default_res()?;
+        let json = json.ok_or(FileReadingError::NotExist)?;
+
+        let mut file_info = serde_json::from_str::<GlobalFileInfo>(&json.0).default_res()?;
+
+        let max_version = file_info.keepers.iter()
+            .map(|v| v.data.iter().max_by_key(|v| v.version).unwrap().version)
+            .max()
+            .ok_or("No one keeps the file".to_string())?;
+
+        if let Ok(mut local_file) = self.storage.get_file(path, None, Some(ChunkVersion(max_version))).await {
+            Ok(local_file.swap_remove(0).1)
+        } else {
+            let keeper_o = file_info.keepers.iter()
+                // .filter(|v| v.id != self.id)
+                .max_by_key(|v| v.data.iter().max_by_key(|v| v.version).unwrap().version);
+            let keeper = keeper_o.ok_or("No one keeps the file with the folder's metadata".to_string())?;
+
+            let stream = self.client.get_file_content(path, keeper.id).await
+                .default_logging_res("when get file content: ")?;
+
+            return Ok(FileStream::DownloadStream(Box::new(stream)))
+        }
+    }
+
     pub async fn get_file_content(&self, path: &str, range_o: Option<Range>) -> Result<Option<FileStream>, FileReadingError> {
         // сходил в dht, узнал где мета о файле
         // нашел мету о файле, пошел узнавать где находится мета о data

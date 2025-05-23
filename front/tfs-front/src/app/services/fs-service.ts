@@ -21,7 +21,7 @@ import {
   NodeMeta,
   DataMetaKey,
   FileMetaData,
-  DataSource
+  DataSource, FileMeta
 } from '../entities/responses/file-info-response';
 import {Folder, FsNodeMeta} from '../components/fs/fs.component';
 import {PermissionService} from './permission-service';
@@ -110,22 +110,33 @@ export class FsService {
     }))
   }
 
+  public getFileMeta(path: string) {
+    let token = this.authService.getToken();
+
+    return this.client.get(this.balancerService.getIP() + "/virtual_fs/file_meta" + path, {
+      headers: {
+        "Authorization": token == null ? "" : token
+      }
+    })
+  }
+
   public getFile(path: string, progress: ((progress: number, total: number) => void)) {
     let token = this.authService.getToken();
 
     // let file = await this.getNodeMeta(path);
     // file.
 
-    let task: Observable<string | void> = this.client.get(this.balancerService.getIP() + "/virtual_fs/file" + path, {
+    // let task: Observable<string | void> = this.client.get(this.balancerService.getIP() + "/virtual_fs/file" + path, {
+    let task: Observable<string | void> = this.client.get(this.balancerService.getIP() + "/virtual_fs/file_meta" + path, {
       headers: {
         "Authorization": token == null ? "" : token
       }
     }).pipe(flatMap(response => {
-      let json = response as NodeMeta;
+      let json = response as FileMeta;
 
-       if (json.File != null) {
+       if (json != null) {
          let observables: Observable<DataSource>[] = [];
-         for (let chunk of json.File.data) {
+         for (let chunk of json.data) {
            let fileMeta = (chunk[1] as FileMetaData)
            let path = fileMeta.hash + "_" + fileMeta.hash_local_id;
 

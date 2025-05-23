@@ -3,7 +3,8 @@
   <h4 class="text-base text-black truncate">Файл: {{filename}}</h4>
 
   <div class="rectangle mt-1 mb-1 flex flex-row items-center">
-    <h3 class="table-cell align-middle text-center text-2xl m-1 all_width">{{filesize}} байт</h3>
+    <h3 class="table-cell align-middle text-center text-2xl m-1 all_width"
+    >{{filesize.toString() == "0" ? "Размер вычисляется.." : filesize + " байт"}}</h3>
   </div>
 
   <h2 class="font-extrabold mt-2 text-lg">Метод модификации</h2>

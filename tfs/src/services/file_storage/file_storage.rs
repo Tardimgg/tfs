@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{Stream, StreamExt, TryStreamExt};
 use futures::FutureExt;
+use reqwest::StatusCode;
 use tokio::fs::File;
 use tokio::io::{BufReader, Take};
 use tokio_stream::wrappers::{BroadcastStream, ReceiverStream};
@@ -21,7 +22,8 @@ pub enum FileStream {
     Payload(web::Payload),
     ReceiverStream(BroadcastStream<Result<Bytes, u16>>),
     TokioFile(ReaderStream<Take<BufReader<File>>>),
-    StringData(Option<String>)
+    StringData(Option<String>),
+    DownloadStream(Box<dyn Stream<Item=Result<Bytes, reqwest::Error>> + Unpin>)
 }
 
 
@@ -37,7 +39,9 @@ impl FileStream {
             FileStream::ReceiverStream(v) => v.next().await
                 .map(|v|
                     v.unwrap_or_else(|err| Err(0))
-                )
+                ),
+            FileStream::DownloadStream(v) => v.next().await
+                .map(|v| v.map_err(|err| err.status().map(|s| s.as_u16()).unwrap_or(0)))
         }
     }
 

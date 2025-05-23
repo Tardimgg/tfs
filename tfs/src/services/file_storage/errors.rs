@@ -98,6 +98,12 @@ impl From<String> for FolderReadingError {
     }
 }
 
+impl From<String> for FileReadingError {
+    fn from(value: String) -> Self {
+        FileReadingError::InternalError(value)
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum CreateFolderError {
     #[error("folder already exist")]
