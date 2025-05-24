@@ -7,7 +7,7 @@ import {
   defer, EMPTY,
   flatMap,
   from,
-  map, merge,
+  map, max, merge,
   mergeMap,
   Observable, pipe,
   switchMap,
@@ -93,7 +93,8 @@ export class FsService {
   public getDataSource(totalSize: number, dataId: string) {
     let token = this.authService.getToken();
 
-    return this.client.get(this.balancerService.getIP() + "/virtual_fs/file/data_meta/" + dataId, {
+    // return this.client.get(this.balancerService.getIP() + "/virtual_fs/file/data_meta/" + dataId, {
+    return this.client.get(this.balancerService.getIP() + "/virtual_fs/distributed_file/data_meta/" + dataId, {
       headers: {
         "Authorization": token == null ? "" : token
       }
@@ -113,7 +114,7 @@ export class FsService {
   public getFileMeta(path: string) {
     let token = this.authService.getToken();
 
-    return this.client.get(this.balancerService.getIP() + "/virtual_fs/file_meta" + path, {
+    return this.client.get(this.balancerService.getIP() + "/virtual_fs/distributed_file" + path, {
       headers: {
         "Authorization": token == null ? "" : token
       }
@@ -123,20 +124,12 @@ export class FsService {
   public getFile(path: string, progress: ((progress: number, total: number) => void)) {
     let token = this.authService.getToken();
 
-    // let file = await this.getNodeMeta(path);
-    // file.
+    let task = this.getFileMeta(path).pipe(flatMap(response => {
+      let json = response as NodeMeta;
 
-    // let task: Observable<string | void> = this.client.get(this.balancerService.getIP() + "/virtual_fs/file" + path, {
-    let task: Observable<string | void> = this.client.get(this.balancerService.getIP() + "/virtual_fs/file_meta" + path, {
-      headers: {
-        "Authorization": token == null ? "" : token
-      }
-    }).pipe(flatMap(response => {
-      let json = response as FileMeta;
-
-       if (json != null) {
+       if (json.File != null) {
          let observables: Observable<DataSource>[] = [];
-         for (let chunk of json.data) {
+         for (let chunk of json.File.data) {
            let fileMeta = (chunk[1] as FileMetaData)
            let path = fileMeta.hash + "_" + fileMeta.hash_local_id;
 
@@ -158,7 +151,6 @@ export class FsService {
         .then(async root => {
           let file = await root.getFileHandle("temp_" + tempId, {
             create: true
-
           })
           let writable = await file.createWritable({
             keepExistingData: true,
@@ -168,7 +160,26 @@ export class FsService {
           chunks.sort((a, b) => a.range[0] - b.range[0])
           let total = chunks[chunks.length - 1].range[1];
           for (let chunk of chunks) {
-            await fetch(this.balancerService.getIP() + '/virtual_fs/file/data/' + chunk.key.hash + "_" +  chunk.key.hash_local_id, {
+
+            let dataPath = "/data/" + chunk.key.hash + "_" +  chunk.key.hash_local_id;
+            let keepers = await this.getNodeMeta(dataPath)
+            let maxVersion = -1;
+            let host = ""
+            for (let keeper of keepers.keepers) {
+              for (let data of keeper.data) {
+                if (data.is_keeper) {
+                  maxVersion = Math.max(maxVersion, data.version)
+                  host = keeper.id.ip + ":" + (keeper.id.port + 1)
+                }
+              }
+            }
+            if (maxVersion == -1) {
+              console.error("maxVersion of data " + dataPath + " == -1")
+            }
+
+
+            // await fetch(this.balancerService.getIP() + '/virtual_fs/file' + dataPath, {
+            await fetch("https://" + host + '/virtual_fs/file' + dataPath, {
               headers: {
                 "Authorization": token == null ? "" : token
               }

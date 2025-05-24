@@ -9,7 +9,7 @@ import {FormsModule} from '@angular/forms';
 import {castFileChangeTypeToE, FileChange, FileChangeType} from '../../entities/file-change';
 import {timer} from 'rxjs';
 import {FsService} from '../../services/fs-service';
-import {FileMeta} from '../../entities/responses/file-info-response';
+import {FileMeta, NodeMeta} from '../../entities/responses/file-info-response';
 
 @Component({
   selector: 'app-file-modification',
@@ -37,15 +37,17 @@ export class FileModificationComponent {
       .subscribe(async(_) => {
         this.fsService.getFileMeta(this.filename)
           .subscribe((response) => {
-            let json = response as FileMeta;
+            let json = response as NodeMeta;
 
-            let totalSize = 0;
-            for (let chunk of json.data) {
-              let range = chunk[0] as number[];
-              totalSize += range[1] - range[0];
+            if (json.File != null) {
+              let totalSize = 0;
+              for (let chunk of json.File.data) {
+                let range = chunk[0] as number[];
+                totalSize += range[1] - range[0];
+              }
+
+              this.filesize = BigInt(totalSize);
             }
-
-            this.filesize = BigInt(totalSize);
           })
         // let node = await this.fsService.getNodeMeta(this.filename);
 

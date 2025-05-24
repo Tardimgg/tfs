@@ -41,7 +41,8 @@ impl UserService {
     pub async fn user_by_id(&self, uid: u64) -> Result<Option<UserInfo>, String> {
         let path = self.config.get_val(ConfigKey::UsersPath).await;
         // тут найдем только если юзер хранится локально, нужно переделать на нормальное скачивание
-        let user_info_stream = self.virtual_fs.get_file_content(&format!("{}/{}", path, uid), None)
+        // let user_info_stream = self.virtual_fs.get_file_content(&format!("{}/{}", path, uid), None)
+        let user_info_stream = self.virtual_fs.get_node_stream(&format!("{}/{}", path, uid))
             .await
             .default_res()?;
 

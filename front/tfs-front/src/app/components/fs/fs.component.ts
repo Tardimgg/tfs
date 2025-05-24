@@ -322,6 +322,9 @@ export class FsComponent {
 
   public async createFolder() {
     let folderName = window.prompt("Название папки");
+    if (folderName == null) {
+      return;
+    }
 
     this.fsService.createFolder(this.path(), folderName == null ? "new_folder" : folderName)
     timer(1000)
@@ -569,7 +572,22 @@ export interface FsNodeMeta {
   filename: string
   file_type: FsNodeType
   id: string
-  // keepers:
+  keepers: FileKeeper[]
+}
+
+export interface FileKeeper {
+  id: NodeId,
+  data: StoredFile[]
+}
+
+export interface StoredFile {
+  version: number,
+  is_keeper: boolean
+}
+
+export interface NodeId {
+  ip: string,
+  port: number
 }
 
 export interface Folder {

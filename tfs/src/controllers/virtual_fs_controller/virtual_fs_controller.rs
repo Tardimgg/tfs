@@ -56,12 +56,12 @@ async fn get_stored_parts(user: AuthenticatedUser, filepath: web::Path<String>, 
     Ok(web::Json(meta))
 }
 
-#[get("/file_meta/{tail:.*}")]
+#[get("/distributed_file/{tail:.*}")]
 async fn get_file_meta(user: AuthenticatedUser, file_path: web::Path<String>,
-                          req: HttpRequest, fs: web::Data<Arc<SharedFS>>) -> Result<Json<File>, ApiException> {
-    let mut file_o = fs.get_ref().get_file_meta(user, &file_path).await?;
-    if let Some(file) = file_o {
-        Ok(web::Json(file))
+                          req: HttpRequest, fs: web::Data<Arc<SharedFS>>) -> Result<impl Responder, ApiException> {
+    let mut stream_o = fs.get_ref().get_distributed_file_content(user, &file_path).await?;
+    if let Some(stream) = stream_o {
+        return Ok(HttpResponse::Ok().content_type(ContentType::json()).streaming(stream.get_stream()))
     } else {
         Err(ApiException::NotFound)
     }

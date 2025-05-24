@@ -194,23 +194,29 @@ impl VirtualFS {
         }
     }
 
-    pub async fn get_file_meta(&self, path: &str) -> Result<Option<File>, FileReadingError> {
-        let node_stream = self.get_node_stream(path).await;
+    pub async fn get_distributed_file_content(&self, path: &str) -> Result<Option<FileStream>, FileReadingError> {
+        let node_stream = self.get_node_stream(path).await?;
 
-        let json_str = read_stream_to_string(node_stream?.get_stream())
-            .await
-            .default_logging_res("read file meta stream to string: ")?;
-
-        let fs_node = serde_json::from_str::<FsNode>(&json_str).default_logging_res("virtual_fs")?;
-
-        if let FsNode::File(file) = fs_node {
-            Ok(Some(file))
-        } else {
-            Err(FileReadingError::BadRequest)
+        if let None = node_stream {
+            return Ok(None);
         }
+        let node_stream = node_stream.unwrap();
+
+        return Ok(Some(node_stream))
+        // let json_str = read_stream_to_string(node_stream.get_stream())
+        //     .await
+        //     .default_logging_res("read file meta stream to string: ")?;
+
+        // let fs_node = serde_json::from_str::<FsNode>(&json_str).default_logging_res("virtual_fs")?;
+
+        // if let FsNode::File(file) = fs_node {
+        //     Ok(Some(file))
+        // } else {
+        //     Err(FileReadingError::BadRequest)
+        // }
     }
 
-    async fn get_node_stream(&self, path: &str) -> Result<FileStream, FileReadingError> {
+    pub async fn get_node_stream(&self, path: &str) -> Result<Option<FileStream>, FileReadingError> {
         let json = self.dht_map.get(path).await.default_res()?;
         let json = json.ok_or(FileReadingError::NotExist)?;
 
@@ -218,11 +224,15 @@ impl VirtualFS {
 
         let max_version = file_info.keepers.iter()
             .map(|v| v.data.iter().max_by_key(|v| v.version).unwrap().version)
-            .max()
-            .ok_or("No one keeps the file".to_string())?;
+            .max();
+
+        if let None = max_version {
+            return Ok(None)
+        }
+        let max_version = max_version.unwrap();
 
         if let Ok(mut local_file) = self.storage.get_file(path, None, Some(ChunkVersion(max_version))).await {
-            Ok(local_file.swap_remove(0).1)
+            Ok(Some(local_file.swap_remove(0).1))
         } else {
             let keeper_o = file_info.keepers.iter()
                 // .filter(|v| v.id != self.id)
@@ -232,7 +242,7 @@ impl VirtualFS {
             let stream = self.client.get_file_content(path, keeper.id).await
                 .default_logging_res("when get file content: ")?;
 
-            return Ok(FileStream::DownloadStream(Box::new(stream)))
+            return Ok(Some(FileStream::DownloadStream(Box::new(stream))))
         }
     }
 

@@ -110,19 +110,34 @@ impl SharedFS {
             FsNodeType::File => ObjType::File,
             _ => ObjType::File
         };
-        if self.permission_service.check_permission(current_user.uid, obj_type, meta.id, PermissionType::Read).await? {
-            Ok(meta)
+
+        let data_path = self.config.get_val(ConfigKey::DataPath).await;
+        let data_meta_path = self.config.get_val(ConfigKey::DataMetaPath).await;
+        if !path.starts_with(&data_path) && !path.starts_with(&data_meta_path) {
+            if self.permission_service.check_permission(current_user.uid, obj_type, meta.id, PermissionType::Read).await? {
+                Ok(meta)
+            } else {
+                Err(NodeMetaReceivingError::AccessDenied)
+            }
         } else {
-            Err(NodeMetaReceivingError::AccessDenied)
+            Ok(meta)
         }
+
     }
 
-    pub async fn get_file_meta(&self, current_user: AuthenticatedUser, path: &str) -> Result<Option<File>, FileReadingError> {
-        // temp code. data must be processed through a regular pipeline
-        let home_path = self.config.get_val(ConfigKey::HomePath).await;
-        if !path.starts_with(&home_path) {
-            return Err(FileReadingError::BadRequest)
-        }
+    pub async fn get_distributed_file_content(&self, current_user: AuthenticatedUser, path: &str) -> Result<Option<FileStream>, FileReadingError> {
+        self.check_file_permissions(current_user, path).await?;
+        self.virtual_fs.get_distributed_file_content(path).await
+    }
+
+    pub async fn get_file_content(&self, current_user: AuthenticatedUser, path: &str,
+                                  range_o: Option<Range>) -> Result<Option<FileStream>, FileReadingError> {
+
+        self.check_file_permissions(current_user, path).await?;
+        self.virtual_fs.get_file_content(path, range_o).await
+    }
+
+    async fn check_file_permissions(&self, current_user: AuthenticatedUser, path: &str) -> Result<(), FileReadingError> {
         if let Err(err) = self.get_node_meta(current_user, path).await {
             return match err {
                 NodeMetaReceivingError::NotFound => Err(FileReadingError::NotExist),
@@ -130,24 +145,7 @@ impl SharedFS {
                 NodeMetaReceivingError::AccessDenied => Err(FileReadingError::AccessDenied)
             }
         }
-        self.virtual_fs.get_file_meta(path).await
-    }
-
-    pub async fn get_file_content(&self, current_user: AuthenticatedUser, path: &str,
-                                  range_o: Option<Range>) -> Result<Option<FileStream>, FileReadingError> {
-        // temp code. data must be processed through a regular pipeline
-        let data_path = self.config.get_val(ConfigKey::DataPath).await;
-        let data_meta_path = self.config.get_val(ConfigKey::DataMetaPath).await;
-        if !path.starts_with(&data_path) && !path.starts_with(&data_meta_path) {
-            if let Err(err) = self.get_node_meta(current_user, path).await {
-                return match err {
-                    NodeMetaReceivingError::NotFound => Err(FileReadingError::NotExist),
-                    NodeMetaReceivingError::InternalError(v) => Err(FileReadingError::InternalError(v)),
-                    NodeMetaReceivingError::AccessDenied => Err(FileReadingError::AccessDenied)
-                }
-            }
-        }
-        self.virtual_fs.get_file_content(path, range_o).await
+        return Ok(())
     }
 
     pub async fn save_existing_chunk(&self, current_user: AuthenticatedUser, path: &str,
