@@ -244,4 +244,5 @@ export class PermissionManagementComponent {
   }
 
   protected readonly castToE = castToE;
+  protected readonly ObjType = ObjType;
 }

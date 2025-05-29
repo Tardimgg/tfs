@@ -9,6 +9,7 @@
     "test": "ng test"
   },
   "private": true,
+  "homapage": "/static",
   "dependencies": {
     "@angular/cdk": "^19.2.3",
     "@angular/common": "^19.2.0",
@@ -23,7 +24,7 @@
     "@tailwindcss/postcss": "^4.1.6",
     "highlight.js": "^11.11.1",
     "ngx-file-drop": "^16.0.0",
-    "ngx-voyage": "file:../ngx-voyage/dist/ngx-voyage/ngx-voyage-0.0.1.tgz",
+    "ngx-voyage": "file:../../lib/ngx-voyage/dist/ngx-voyage/ngx-voyage-0.0.1.tgz",
     "postcss": "^8.5.3",
     "primeng": "^19.1.2",
     "rxjs": "~7.8.0",

@@ -16,6 +16,7 @@ use crate::common::common::{generate_token, read_stream_to_string};
 use crate::common::default_error::DefaultError;
 use crate::common::models::{JwtToken, ObjType, PermissionType, TokenAction, TokenType, UserInfo};
 use crate::common::retry_police::fixed_backoff_with_jitter::FixedBackoffWithJitter;
+use crate::common::retry_police::linear_backoff_with_jitter::LinearBackoffWithJitter;
 use crate::config::global_config::{ConfigKey, GlobalConfig};
 use crate::services::dht_map::dht_map::DHTMap;
 use crate::services::dht_map::model::PrevSeq;
@@ -73,6 +74,10 @@ impl UserService {
     }
 
     pub async fn create_user_impl(&self, login: &str, password: &str) -> Result<NewUser, String> {
+        if login.is_empty() {
+            return Err("invalid login".to_string());
+        }
+
         if let Some(uid) = self.virtual_fs.uid_by_login(login).await? {
             return Err("user already exists".to_string())
         }
@@ -107,10 +112,12 @@ impl UserService {
     pub async fn create_user(&self, login: &str, password: &str) -> Result<NewUser, String> {
         let user = retry_fn(|| self.create_user_impl(login, password))
             .retries(3)
-            .custom_backoff(FixedBackoffWithJitter::new(Duration::from_secs(2), 30))
+            .custom_backoff(LinearBackoffWithJitter::new(Duration::from_secs(1), 2, 30))
             .await?;
 
-        self.init_user_folder(&user, login).await?;
+        retry_fn(|| self.init_user_folder(&user, login))
+            .retries(3)
+            .custom_backoff(LinearBackoffWithJitter::new(Duration::from_secs(1), 2, 30));
         Ok(user)
     }
 

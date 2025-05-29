@@ -30,6 +30,7 @@ pub enum ConfigKey {
     RebacPath,
     RebacFolderId,
     UsersPath,
+    UiPath,
     UsersFolderId,
     FsNodeIdMappingPath,
     UserUidMappingPath,
@@ -65,7 +66,8 @@ impl ConfigKey {
             ConfigKey::UsersFolderId => false,
             ConfigKey::SelfUid => true,
             ConfigKey::SecretSigningKey => true,
-            ConfigKey::AnonymousUid => true
+            ConfigKey::AnonymousUid => true,
+            ConfigKey::UiPath => false
         }
     }
 }
@@ -94,7 +96,8 @@ impl ConfigKey {
             ConfigKey::UsersFolderId => "5".to_string(),
             ConfigKey::SelfUid => "1".to_string(),
             ConfigKey::SecretSigningKey => "some-secret".to_string(),
-            ConfigKey::AnonymousUid => "2".to_string()
+            ConfigKey::AnonymousUid => "2".to_string(),
+            ConfigKey::UiPath => "fs".to_string()
         }
     }
 }
@@ -122,7 +125,8 @@ impl ConfigKey{
             ConfigKey::UsersFolderId => "users_folder_id",
             ConfigKey::SelfUid => "self_uid",
             ConfigKey::SecretSigningKey => "secret_signing_secret",
-            ConfigKey::AnonymousUid => "anonymous_uid"
+            ConfigKey::AnonymousUid => "anonymous_uid",
+            ConfigKey::UiPath => "ui_path"
         }
     }
 }

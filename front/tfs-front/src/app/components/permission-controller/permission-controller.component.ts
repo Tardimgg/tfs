@@ -91,6 +91,7 @@ export class PermissionControllerComponent {
   }
 
   protected readonly castToE = castToE;
+  protected readonly ObjType = ObjType;
 }
 
 class PermissionWrapper {

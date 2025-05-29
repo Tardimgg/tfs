@@ -109,6 +109,7 @@ impl Heartbeat {
         let temp_path = self.config.get_val(ConfigKey::TempFolder).await;
         let rbac_path = self.config.get_val(ConfigKey::RebacPath).await;
         let users_path = self.config.get_val(ConfigKey::UsersPath).await;
+        let ui_path = self.config.get_val(ConfigKey::UiPath).await;
 
         let distributed_folders = [
             (data_path.clone(), Some(FsNodeType::Data)),
@@ -124,7 +125,8 @@ impl Heartbeat {
             home_path.clone(),
             temp_path.clone(),
             rbac_path.clone(),
-            users_path.clone()
+            users_path.clone(),
+            ui_path.clone()
         ];
 
         join_all(

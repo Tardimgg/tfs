@@ -1,5 +1,5 @@
 <button *ngIf="userLogin == ''" class="topnav_hid_elem fast-ref topnav-right" routerLink="/registration">Вход</button>
 <div class="topnav-right">
-  <a routerLink="dialogs" class="topnav_hid_elem fast-ref" *ngIf="userLogin != ''">{{userLogin}}</a>
+  <span routerLink="dialogs" class="topnav_hid_elem fast-ref" *ngIf="userLogin != ''">{{userLogin}}</span>
   <button *ngIf="userLogin != ''" (click)="logout()" class="topnav_hid_elem fast-ref ml-2">Выйти</button>
 </div>

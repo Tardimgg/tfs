@@ -25,7 +25,9 @@ use std::thread::sleep;
 use std::time::SystemTime;
 use actix::fut::try_future::MapErr;
 use actix_cors::Cors;
+use actix_files::{Files, NamedFile};
 use actix_web::{App, HttpServer, web};
+use actix_web::dev::{ServiceRequest, ServiceResponse};
 use actix_web::middleware::Logger;
 use actix_web::rt::signal;
 use actix_web::web::Data;
@@ -195,6 +197,15 @@ async fn main() -> Result<(), AppError> {
             .service(controllers::permission_controller::permission_controller::config())
             .service(controllers::dht_controller::dht_controller::config())
             .service(controllers::user_controller::user_controller::config())
+            .service(Files::new("/fs", "fs/")
+                .prefer_utf8(true)
+                .default_handler(|req: ServiceRequest| async {
+                    let (req, _) = req.into_parts();
+                    let file = NamedFile::open_async("./fs/index.html").await?;
+                    let res = file.into_response(&req);
+                    Ok(ServiceResponse::new(req, res))
+                })
+            )
             .wrap(Logger::default())
             .wrap(Cors::permissive())
     })

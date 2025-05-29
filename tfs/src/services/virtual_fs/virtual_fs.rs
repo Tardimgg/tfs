@@ -722,7 +722,7 @@ impl VirtualFS {
             is_keeper: true,
         });
 
-        self.update_state(&format!("/{data_meta_path}"), None, FsNodeType::DataMeta, &new, &HashSet::new(), PrevSeq::Any).await?;
+        self.update_state(&data_meta_path, None, FsNodeType::DataMeta, &new, &HashSet::new(), PrevSeq::Any).await?;
         self.state_updater.send(StateUpdate::NewDataMeta(data_meta_path)).await.err().iter()
             .for_each(|v| println!("failed to inform file storage about a new file. Err = {}", v));
 
@@ -736,7 +736,7 @@ impl VirtualFS {
 
         let local_new_path = format!("{}/{}", self.config.get_val(ConfigKey::DataPath).await, data_id.filename());
         self.storage.move_chunk(&temp_path, &local_new_path).await?;
-        self.update_state(&format!("/{local_new_path}"), None, FsNodeType::Data, &new, &HashSet::new(), PrevSeq::Any).await?;
+        self.update_state(&local_new_path, None, FsNodeType::Data, &new, &HashSet::new(), PrevSeq::Any).await?;
         self.state_updater.send(StateUpdate::NewData(local_new_path)).await.err().iter()
             .for_each(|v| println!("failed to inform file storage about a new file. Err = {}", v));
 
