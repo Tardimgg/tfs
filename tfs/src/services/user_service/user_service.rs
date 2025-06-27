@@ -117,7 +117,8 @@ impl UserService {
 
         retry_fn(|| self.init_user_folder(&user, login))
             .retries(3)
-            .custom_backoff(LinearBackoffWithJitter::new(Duration::from_secs(1), 2, 30));
+            .custom_backoff(LinearBackoffWithJitter::new(Duration::from_secs(1), 2, 30))
+            .await?;
         Ok(user)
     }
 

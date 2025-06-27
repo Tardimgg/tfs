@@ -13,16 +13,16 @@ export class BalancerService {
   // private url = 'https://10.42.0.212:8081';
   private url = 'https://158.160.98.131:8081';
 
-  // private urls = [
-  //   'https://158.160.98.131:8081',
-  //   'https://158.160.186.112:8081',
-  //   'https://158.160.21.119:8081',
-  // ]
-  //
   private urls = [
-    'https://10.42.0.212:8081',
-    'https://10.42.0.1:8081'
+    'https://158.160.98.131:8081',
+    'https://158.160.186.112:8081',
+    'https://158.160.21.119:8081',
   ]
+
+  // private urls = [
+    // 'https://10.42.0.212:8081',
+    // 'https://10.42.0.1:8081'
+  // ]
 
   constructor(private client: HttpClient) {
   }
