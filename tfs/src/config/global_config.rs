@@ -13,7 +13,8 @@ use crate::services::dht_map::dht_map::DHTMap;
 pub struct GlobalConfig {
     dht: Arc<DHTMap>,
     cache: Cache<ConfigKey, String>,
-    initial_overrides: DashMap<ConfigKey, String>
+    initial_overrides: DashMap<ConfigKey, String>,
+    root_certificate: Vec<u8>
 }
 
 #[derive(Hash, Eq, PartialEq, EnumIter, Copy, Clone, Debug)]
@@ -134,11 +135,12 @@ impl ConfigKey{
 
 static CONFIG_PREFIX: &str = "/config/";
 impl GlobalConfig {
-    pub async fn new(dht: Arc<DHTMap>) -> Self {
+    pub async fn new(dht: Arc<DHTMap>, root_certificate: Vec<u8>) -> Self {
         let mut global_config = GlobalConfig {
             dht,
             cache: Cache::new(1),
             initial_overrides: Default::default(),
+            root_certificate
         };
 
         let mut overrides = DashMap::default();
@@ -156,6 +158,10 @@ impl GlobalConfig {
         global_config.initial_overrides = overrides;
         global_config.cache = builder.build();
         global_config
+    }
+
+    pub fn get_root_certificate(&self) -> &[u8] {
+        &self.root_certificate
     }
 
     pub async fn get_val_by_str(&self, key: &str) -> Option<String> {

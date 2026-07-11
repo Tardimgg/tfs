@@ -24,9 +24,7 @@ use crate::services::dht_map::model::DhtNodeId;
 use crate::services::file_storage::file_storage::FileStream;
 use crate::services::virtual_fs::models::{FsNodeType, StoredFile};
 
-#[derive(TypedBuilder)]
 pub struct InternalCommunication {
-    #[builder(default=reqwest::Client::default())]
     client: reqwest::Client,
     config: Arc<GlobalConfig>
 }
@@ -38,6 +36,18 @@ struct SaveExistingRequest {
 }
 
 impl InternalCommunication {
+    
+    pub fn new(config: Arc<GlobalConfig>) -> Self {
+
+        let cert = config.get_root_certificate();
+        let client = reqwest::Client::builder()
+            .add_root_certificate(reqwest::Certificate::from_pem(cert).unwrap())
+            .build()
+            .unwrap();
+
+        Self { client, config }
+    }
+
 
     pub async fn send_file(&self, filename: &str, node: DhtNodeId, file: FileStream, range: Range, fs_node_type: FsNodeType, version: u64) -> Result<(), String> {
         // self.client.put(format!("http://{}:{}/virtual_fs/file/{}", node.ip, node.port, filename))
@@ -55,7 +65,7 @@ impl InternalCommunication {
         };
 
         // let response = self.client.put(format!("http://{}:{}/virtual_fs/file/{}", node.ip, node.port, filename))
-        let response = self.client.post(format!("http://{}:{}/virtual_fs/file/{}", node.ip, node.port, filename.trim_start_matches("/")))
+        let response = self.client.post(format!("https://{}:{}/virtual_fs/file/{}", node.ip, node.port, filename.trim_start_matches("/")))
             .header(RANGE, range.to_string())
             .header(AUTHORIZATION, format!("Bearer {}", self.internal_token().await))
             .body(reqwest::Body::wrap_stream(stream))
@@ -73,7 +83,7 @@ impl InternalCommunication {
 
     pub async fn get_stored_versions_of_file(&self, filename: &str, node: DhtNodeId) -> Result<Vec<StoredFile>, String> { // видимо нужный какой то общий FileRange
         let response = retry_fn(async || {
-            self.client.get(format!("http://{}:{}/virtual_fs/stored_parts/{}", node.ip, node.port, filename))
+            self.client.get(format!("https://{}:{}/virtual_fs/stored_parts/{}", node.ip, node.port, filename))
                 .header(AUTHORIZATION, format!("Bearer {}", self.internal_token().await))
                 .send()
                 .await
@@ -94,7 +104,7 @@ impl InternalCommunication {
 
     pub async fn get_file_content(&self, filename: &str, node: DhtNodeId) -> Result<impl Stream<Item=Result<Bytes, reqwest::Error>>, String> {
         let response = retry_fn(|| async {
-            self.client.get(format!("http://{}:{}/virtual_fs/file/{}", node.ip, node.port, filename))
+            self.client.get(format!("https://{}:{}/virtual_fs/file/{}", node.ip, node.port, filename))
                 .header(AUTHORIZATION, format!("Bearer {}", self.internal_token().await))
                 .send()
                 .await

@@ -92,7 +92,7 @@ async fn main() -> Result<(), AppError> {
         .port(port)
         .build();
 
-    let config = Arc::new(GlobalConfig::new(dht.clone()).await);
+    let config = Arc::new(GlobalConfig::new(dht.clone(), load_ca_cert()).await);
     let storage = Arc::new(LocalStorage{ base_path: "root".to_string() });
 
     let (tx, rx) = mpsc::channel(32);
@@ -102,7 +102,7 @@ async fn main() -> Result<(), AppError> {
         .storage(storage.clone())
         .config(config.clone())
         .state_updater(tx)
-        .client(InternalCommunication::builder().config(config.clone()).build())
+        .client(InternalCommunication::new(config.clone()))
         .build();
 
     virtual_fs.init().await.err().iter().for_each(|v| println!("init err: {}", v));
@@ -143,9 +143,7 @@ async fn main() -> Result<(), AppError> {
     let cloned_cancellation_token = cancellation_token.clone();
     tokio::task::spawn_blocking(|| {
         Handle::current().block_on(async move {
-            let internal_client = InternalCommunication::builder()
-                .config(cloned_config.clone())
-                .build();
+            let internal_client = InternalCommunication::new(cloned_config.clone());
             let heartbeat = Heartbeat::builder()
                 .fs(cloned_fs)
                 .config(cloned_config)
@@ -181,7 +179,9 @@ async fn main() -> Result<(), AppError> {
     builder
         .set_private_key(&load_encrypted_private_key())
         .unwrap();
-    builder.set_certificate_chain_file("cert.pem").unwrap();
+    builder
+        .set_certificate_chain_file(&tls_path("TLS_TFS_CRT_PATH", "tls/tfs.crt"))
+        .unwrap();
 
     HttpServer::new(move || {
         App::new()
@@ -209,8 +209,8 @@ async fn main() -> Result<(), AppError> {
             .wrap(Logger::default())
             .wrap(Cors::permissive())
     })
-        .bind(("0.0.0.0", port))?
-        .bind_openssl(("0.0.0.0", port + 1), builder)?
+        .bind(("0.0.0.0", port + 1))?
+        .bind_openssl(("0.0.0.0", port), builder)?
         .run()
         .await?;
 
@@ -221,8 +221,26 @@ async fn main() -> Result<(), AppError> {
     // client().await;
 }
 
+fn tls_path(env_var: &str, default: &str) -> String {
+    env::var(env_var).unwrap_or_else(|_| {
+        log::warn!("{} not set, using default: {}", env_var, default);
+        default.to_string()
+    })
+}
+
+fn load_ca_cert() -> Vec<u8> {
+    let path = tls_path("TLS_ROOT_CA_PATH", "tls/rootCA.pem");
+    let mut file = File::open(&path).unwrap();
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer).expect("Failed to read file");
+
+    buffer
+}
+
+
 fn load_encrypted_private_key() -> PKey<Private> {
-    let mut file = File::open("key.pem").unwrap();
+    let path = tls_path("TLS_TFS_KEY_PATH", "tls/tfs.key");
+    let mut file = File::open(&path).unwrap();
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer).expect("Failed to read file");
 

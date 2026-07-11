@@ -77,7 +77,7 @@ impl VirtualFS {
             id,
             config: config.clone(),
             state_updater,
-            client: InternalCommunication::builder().config(config).build()
+            client: InternalCommunication::new(config)
         };
         instance.init().await;
         instance
