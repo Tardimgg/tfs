@@ -165,7 +165,7 @@ impl GlobalConfig {
     }
 
     pub async fn get_val_by_str(&self, key: &str) -> Option<String> {
-        self.dht.get(&format!("{CONFIG_PREFIX}{key}")).await.unwrap_or(None).map(|v| v.0)
+        self.dht.get::<String>(&format!("{CONFIG_PREFIX}{key}")).await.unwrap_or(None).map(|v| v.0)
     }
 
     pub async fn get_val(&self, key: ConfigKey) -> String {
@@ -194,7 +194,7 @@ impl GlobalConfig {
     }
 
     async fn get_fresh_val(&self, key: ConfigKey) -> String {
-        if let Ok(Some(v)) = self.dht.get(&format!("{CONFIG_PREFIX}{}", key.get_path())).await {
+        if let Ok(Some(v)) = self.dht.get::<String>(&format!("{CONFIG_PREFIX}{}", key.get_path())).await {
             v.0
         } else {
             key.get_default_value()

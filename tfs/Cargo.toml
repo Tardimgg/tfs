@@ -16,7 +16,7 @@ futures = { version = "0.3.29", features = []}
 sha2 = { version = "0.10.8" , features = ["sha2-asm"]}
 thiserror = "2.0.3"
 ed25519-dalek = "2.1.1"
-serde_json = "=1.0.133"
+serde_json = { version = "=1.0.133", features = ["preserve_order"] }
 serde = { version = "1.0.210", features = ["derive"] }
 tryhard = "0.5.1"
 rand = "0.8.5"
@@ -37,7 +37,8 @@ awc = "3.5.1"
 moka = { version = "0.12.10" , features = ["future"]}
 reqwest = { version = "0.12.12" , features = ["stream", "json"]}
 tokio-stream = { version = "0.1.17" , features = ["sync"]}
-jsonm-bugfixed = "0.2.1"
+prost = "0.13.5"
+zstd = "0.13.2"
 strum = "0.27"
 strum_macros = "0.27"
 itertools = "0.14.0"

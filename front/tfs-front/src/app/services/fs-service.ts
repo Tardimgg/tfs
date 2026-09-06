@@ -169,7 +169,7 @@ export class FsService {
               for (let data of keeper.data) {
                 if (data.is_keeper) {
                   maxVersion = Math.max(maxVersion, data.version)
-                  host = keeper.id.ip + ":" + (keeper.id.port + 1)
+                  host = keeper.id.ip + ":" + keeper.id.port
                 }
               }
             }
@@ -445,6 +445,5 @@ export class FsService {
     return folder;
   }
 }
-
 
 

@@ -3,6 +3,29 @@ use thiserror::Error;
 use ed25519_dalek::SignatureError;
 
 #[derive(Error, Debug)]
+pub enum DhtCodecError {
+    #[error("failed to decode protobuf DHT value: {0}")]
+    ProtobufDecode(#[from] prost::DecodeError),
+    #[error("failed to compress or decompress DHT value: {0}")]
+    Compression(#[from] std::io::Error),
+    #[error("unsupported DHT value version: {0}")]
+    UnsupportedVersion(u32),
+    #[error("missing protobuf field: {0}")]
+    MissingField(&'static str),
+    #[error("invalid protobuf DHT value: {0}")]
+    InvalidValue(String),
+    #[error("protobuf DHT record is too large before compression: {size} bytes, maximum is {max}")]
+    UncompressedValueTooLarge { size: usize, max: usize },
+    #[error("stored DHT value is too large: {size} bytes, maximum is {max}")]
+    RecordEnvelopeTooLarge { size: usize, max: usize },
+    #[error("unexpected DHT value type: expected {expected}, found {actual}")]
+    UnexpectedValueType {
+        expected: &'static str,
+        actual: &'static str
+    }
+}
+
+#[derive(Error, Debug)]
 pub enum CreateError {
     #[error("Invalid Id encoding: {0}")]
     MainlineDhtError(#[from] mainline::Error)
@@ -21,7 +44,9 @@ pub enum DhtGetError {
     #[error("Invalid Id encoding: {0}")]
     InvalidKey(#[from] KeyError),
     #[error("An unexpected value was received from dht: {0}")]
-    InternalError(String)
+    InternalError(String),
+    #[error(transparent)]
+    Codec(#[from] DhtCodecError)
 }
 
 impl From<String> for DhtGetError {
@@ -48,14 +73,12 @@ pub enum KeyError {
 pub enum DhtPutError {
     #[error("Invalid Id encoding: {0}")]
     InvalidKey(#[from] KeyError),
-    #[error("Invalid ")]
-    InvalidValue,
-    #[error("Invalid ")]
-    XZError,
-    #[error("Invalid ")]
-    AlreadyExist,
-    #[error("Invallid dht state {0}")]
-    UnexpectedDhtState(#[from] serde_json::Error),
+    #[error("encoded DHT value is too large: {size} bytes, maximum is {max}")]
+    ValueTooLarge { size: usize, max: usize },
+    #[error("DHT sequence number cannot be incremented: {0}")]
+    SequenceOverflow(i64),
+    #[error(transparent)]
+    Codec(#[from] DhtCodecError),
     #[error("invalid internal state: {0}")]
     InternalError(String)
 }

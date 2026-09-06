@@ -87,10 +87,9 @@ impl Rebac {
             .err().iter().for_each(|v| error!("{v}"));
 
         prev_permissions.push(permission);
-        let json = serde_json::to_string(&prev_permissions).default_res()?;
 
         let path = format!("{}/{}", self.config.get_val(ConfigKey::RebacPath).await, obj_id.to_str_key());
-        self.dht_map.put_with_seq(&path, &json, prev_seq).await.default_res()?;
+        self.dht_map.put_with_seq(&path, &prev_permissions, prev_seq).await.default_res()?;
 
         Ok(())
     }
@@ -144,10 +143,9 @@ impl Rebac {
 
                 active_permissions_to_delete.iter().rev().for_each(|(i, version)| { exists_permission.swap_remove(*i); });
                 exists_permission.push(permission);
-                let json = serde_json::to_string(&exists_permission).default_res()?;
 
                 let path = format!("{}/{}", self.config.get_val(ConfigKey::RebacPath).await, obj_id.to_str_key());
-                self.dht_map.put_with_seq(&path, &json, prev_seq).await.default_res()?;
+                self.dht_map.put_with_seq(&path, &exists_permission, prev_seq).await.default_res()?;
             }
         }
 
@@ -189,20 +187,19 @@ impl Rebac {
 
     async fn get_permissions_of_all_users_without_rights_check(&self, obj_id: RebacKey) -> Result<Option<(Vec<Permission>, i64)>, String> {
         let path = format!("{}/{}", self.config.get_val(ConfigKey::RebacPath).await, obj_id.to_str_key());
-        let permissions_json = self.dht_map.get(&path).await.default_res()?;
+        let permissions_record = self.dht_map.get::<Vec<Permission>>(&path).await.default_res()?;
 
-        if permissions_json.is_none() {
+        if permissions_record.is_none() {
             return Ok(None)
         }
-        let permissions_json = permissions_json.unwrap();
+        let (permissions, seq) = permissions_record.unwrap();
 
-        let permissions = serde_json::from_str::<Vec<Permission>>(&permissions_json.0).default_res()?;
         let active_permissions = permissions.into_iter()
             .filter(|v| !v.deleted)
             .collect();
         Ok(Some((
             active_permissions,
-            permissions_json.1
+            seq
         )))
     }
 

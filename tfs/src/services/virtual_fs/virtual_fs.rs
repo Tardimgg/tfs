@@ -87,10 +87,10 @@ impl VirtualFS {
         let location_prefix = self.config.get_val(ConfigKey::LocationOfKeepersIps).await;
 
         retry_fn(|| async {
-            let mut new_keepers;
+            let new_keepers;
             let mut prev_seq = None;
-            if let Some((current_keepers, record_seq)) = self.dht_map.get(&location_prefix).await.default_res()? {
-                let mut keepers = serde_json::from_str::<Vec<DhtNodeId>>(&current_keepers).unwrap();
+            if let Some((current_keepers, record_seq)) = self.dht_map.get::<Vec<DhtNodeId>>(&location_prefix).await.default_res()? {
+                let mut keepers = current_keepers;
                 if !keepers.contains(&self.id) {
                     keepers.push(self.id);
                 } else {
@@ -103,8 +103,7 @@ impl VirtualFS {
                 new_keepers = vec![self.id];
             }
 
-            let new_keepers_str = serde_json::to_string(&new_keepers).unwrap();
-            let res = self.dht_map.put_with_seq(&location_prefix, &new_keepers_str, PrevSeq::Seq(prev_seq)).await;
+            let res = self.dht_map.put_with_seq(&location_prefix, &new_keepers, PrevSeq::Seq(prev_seq)).await;
             println!("success init {:?}", res);
             return res;
         }).retries(3)
@@ -122,10 +121,8 @@ impl VirtualFS {
             .trim_start_matches("/")
             .trim_end_matches("/");
 
-        let folder_json = self.dht_map.get(path).await.default_res()?;
-        let folder_json = folder_json.ok_or(FolderReadingError::NotExist(format!("{:?} does not exist", path)))?;
-
-        let mut folder_keepers = serde_json::from_str::<GlobalFileInfo>(&folder_json.0).default_res()?;
+        let folder_record = self.dht_map.get::<GlobalFileInfo>(path).await.default_res()?;
+        let (folder_keepers, _) = folder_record.ok_or(FolderReadingError::NotExist(format!("{:?} does not exist", path)))?;
 
         if folder_keepers.file_type != FsNodeType::Folder {
             return Err(FolderReadingError::BadRequest(format!("{:?} is not a folder", path)));
@@ -175,20 +172,18 @@ impl VirtualFS {
 
 
     pub async fn get_node_meta(&self, path: &str) -> Result<GlobalFileInfo, NodeMetaReceivingError> {
-        let dht_info = self.dht_map.get(path).await.map_err(|err| format!("error when get_node_meta, path: {path}, err: {err}"))?;
+        let dht_info = self.dht_map.get::<GlobalFileInfo>(path).await.map_err(|err| format!("error when get_node_meta, path: {path}, err: {err}"))?;
         if dht_info.is_none() {
             return Err(NodeMetaReceivingError::NotFound);
         }
-        let keepers: GlobalFileInfo = serde_json::from_str(&dht_info.unwrap().0).unwrap();
-
-        Ok(keepers)
+        Ok(dht_info.unwrap().0)
     }
 
     pub async fn get_all_keepers(&self) -> Result<Vec<DhtNodeId>, String> {
         let prefix = self.config.get_val(ConfigKey::LocationOfKeepersIps).await;
 
-        match self.dht_map.get(&prefix).await {
-            Ok(Some((keepers, seq))) => Ok(serde_json::from_str::<Vec<DhtNodeId>>(&keepers).unwrap().into()),
+        match self.dht_map.get::<Vec<DhtNodeId>>(&prefix).await {
+            Ok(Some((keepers, _))) => Ok(keepers),
             Err(err) => Err(err.to_string()),
             Ok(None) => Ok(vec![])
         }
@@ -217,10 +212,8 @@ impl VirtualFS {
     }
 
     pub async fn get_node_stream(&self, path: &str) -> Result<Option<FileStream>, FileReadingError> {
-        let json = self.dht_map.get(path).await.default_res()?;
-        let json = json.ok_or(FileReadingError::NotExist)?;
-
-        let mut file_info = serde_json::from_str::<GlobalFileInfo>(&json.0).default_res()?;
+        let record = self.dht_map.get::<GlobalFileInfo>(path).await.default_res()?;
+        let (file_info, _) = record.ok_or(FileReadingError::NotExist)?;
 
         let max_version = file_info.keepers.iter()
             .map(|v| v.data.iter().max_by_key(|v| v.version).unwrap().version)
@@ -328,7 +321,7 @@ impl VirtualFS {
 
     pub async fn filename_by_id(&self, obj_id: u64) -> Result<Option<String>, String> {
         let path = self.config.get_val(ConfigKey::FsNodeIdMappingPath).await;
-        let record = self.dht_map.get(&format!("{}/{}", path, obj_id))
+        let record = self.dht_map.get::<String>(&format!("{}/{}", path, obj_id))
             .await
             .default_res()?;
 
@@ -365,23 +358,24 @@ impl VirtualFS {
     pub async fn lock_id(&self, id: u64, filename: &str) -> Result<(), String> {
         // не будет жить при переименовании файла
         let path = self.config.get_val(ConfigKey::FsNodeIdMappingPath).await;
-        self.dht_map.put_with_seq(&format!("{}/{}", path, id), filename, PrevSeq::Seq(None)).await.default_res()?;
+        let filename = filename.to_string();
+        self.dht_map.put_with_seq(&format!("{}/{}", path, id), &filename, PrevSeq::Seq(None)).await.default_res()?;
         Ok(())
     }
 
     pub async fn lock_user_uid_mapping(&self, uid: u64, login: &str) -> Result<(), String> {
         // не будет жить при переименовании файла
         let path = self.config.get_val(ConfigKey::UserUidMappingPath).await;
-        self.dht_map.put_with_seq(&format!("{}/{}", path, login), &uid.to_string(), PrevSeq::Seq(None)).await.default_res()?;
+        self.dht_map.put_with_seq(&format!("{}/{}", path, login), &uid, PrevSeq::Seq(None)).await.default_res()?;
         Ok(())
     }
 
     pub async fn uid_by_login(&self, login: &str) -> Result<Option<u64>, String> {
         let path = self.config.get_val(ConfigKey::UserUidMappingPath).await;
-        let uid = self.dht_map.get(&format!("{}/{}", path, login)).await.default_res()?;
+        let uid = self.dht_map.get::<u64>(&format!("{}/{}", path, login)).await.default_res()?;
 
         if let Some(some_uid) = uid {
-            Ok(Some(u64::from_str(&some_uid.0).default_res()?))
+            Ok(Some(some_uid.0))
         } else {
             Ok(None)
         }
@@ -402,10 +396,10 @@ impl VirtualFS {
     pub async fn update_state(&self, path: &str, record_id: Option<u64>, file_type: FsNodeType, to_add: &HashSet<StoredFile>,
                               to_delete: &HashSet<StoredFile>, put_with_seq: PrevSeq) -> Result<(), String> {
         // тут удаляем слишком старые версии
-        let prev_o = self.dht_map.get(path).await.default_res()?;
+        let prev_o = self.dht_map.get::<GlobalFileInfo>(path).await.default_res()?;
 
-        if let Some((prev, prev_seq)) = prev_o {
-            let mut info = serde_json::from_str::<GlobalFileInfo>(&prev).default_res()?;
+        if let Some((prev, _prev_seq)) = prev_o {
+            let mut info = prev;
 
             let max_version = info.keepers.iter()
                 .flat_map(|v| &v.data)
@@ -493,9 +487,8 @@ impl VirtualFS {
             }
 
             if changed {
-                let new_string = serde_json::to_string(&info).unwrap();
-                debug!("new dht path {} val {} ", path, new_string);
-                self.dht_map.put_with_seq(path, &new_string, put_with_seq).await.default_res()?;
+                debug!("new dht path {} val {:?} ", path, info);
+                self.dht_map.put_with_seq(path, &info, put_with_seq).await.default_res()?;
             }
         } else {
             let keeper = FileKeeper::builder()
@@ -510,7 +503,7 @@ impl VirtualFS {
                 .file_type(file_type)
                 .id(record_id.unwrap_or(0))
                 .build();
-            self.dht_map.put_with_seq(path, &serde_json::to_string(&file_info).unwrap(), put_with_seq).await.default_res()?;
+            self.dht_map.put_with_seq(path, &file_info, put_with_seq).await.default_res()?;
         }
         Ok(())
     }
@@ -553,22 +546,21 @@ impl VirtualFS {
 
     async fn check_exist(&self, path: &Path) -> Result<Option<FsNodeType>, String> {
         let str_path = path.to_str().unwrap();
-        let node = self.dht_map.get(str_path).await.default_res()?;
+        let node = self.dht_map.get::<GlobalFileInfo>(str_path).await.default_res()?;
 
         if let Some(some) = node {
-           let parsed = serde_json::from_str::<GlobalFileInfo>(&some.0).default_res()?;
-            return Ok(Some(parsed.file_type))
+            return Ok(Some(some.0.file_type))
         }
         Ok(None)
     }
 
     pub async fn lock_next_file_version(&self, path: &str, file_type: FsNodeType) -> Result<(u64, Option<GlobalFileInfo>), String> {
-        let already_exist_o = self.dht_map.get(path).await.default_res()?;
+        let already_exist_o = self.dht_map.get::<GlobalFileInfo>(path).await.default_res()?;
         let prev_seq;
         let mut version;
         let mut prev_file_meta;
         if let Some((already_exist, exist_seq)) = already_exist_o {
-            let file_meta = parse_dht_val(&already_exist)?;
+            let file_meta = already_exist;
             if file_meta.file_type != file_type {
                 return Err(format!("the existing record is of a different type. Exist {:?}, attempt to update {:?}",
                                    file_meta.file_type, file_type));
@@ -892,10 +884,8 @@ impl VirtualFS {
     async fn put_file_into_folder(&self, filepath: &Path, folder: &Path) -> Result<(), String> {
         // добавить ретраи
         let folder_path_str = folder.to_str().unwrap();
-        let folder_json = self.dht_map.get(folder_path_str).await.default_res()?;
-        let folder_json = folder_json.ok_or(format!("{:?} does not exist", folder))?;
-
-        let mut folder_keepers = serde_json::from_str::<GlobalFileInfo>(&folder_json.0).default_res()?;
+        let folder_record = self.dht_map.get::<GlobalFileInfo>(folder_path_str).await.default_res()?;
+        let (folder_keepers, folder_seq) = folder_record.ok_or(format!("{:?} does not exist", folder))?;
 
         if folder_keepers.file_type != FsNodeType::Folder {
             return Err(format!("{:?} is not a folder", folder));
@@ -921,7 +911,7 @@ impl VirtualFS {
         }
 
         let node_version = keeper.data.iter().max_by_key(|v| v.version).unwrap().version + 1;
-        self.save_node(folder.get_path().unwrap(), &folder, node_version, PrevSeq::Seq(Some(folder_json.1))).await
+        self.save_node(folder.get_path().unwrap(), &folder, node_version, PrevSeq::Seq(Some(folder_seq))).await
 
         /*
                 let folder_str = serde_json::to_string(&folder).default_res()?;
@@ -950,10 +940,6 @@ impl VirtualFS {
 
          */
     }
-}
-
-fn parse_dht_val(val: &str) -> Result<GlobalFileInfo, String> {
-    Ok(serde_json::from_str::<GlobalFileInfo>(val).default_res()?.into())
 }
 
 fn parse_range(range_o: Option<Range>) -> Result<Vec<Result<FileRange, String>>, String> {

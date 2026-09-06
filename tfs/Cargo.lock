@@ -1842,17 +1842,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "jsonm-bugfixed"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ccd8effb97bbf28c1b391cd8203a10ae205b31c750c38c45cf6c41321e5d2e3"
-dependencies = [
- "regex",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "jwt"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2954,12 +2943,12 @@ dependencies = [
  "futures",
  "hmac",
  "itertools",
- "jsonm-bugfixed",
  "jwt",
  "log",
  "mainline",
  "moka",
  "openssl",
+ "prost",
  "rand",
  "reqwest",
  "serde",
@@ -2974,6 +2963,7 @@ dependencies = [
  "tokio-util",
  "tryhard",
  "typed-builder",
+ "zstd",
 ]
 
 [[package]]
