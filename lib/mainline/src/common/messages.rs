@@ -459,19 +459,20 @@ impl Message {
                                                 target: Id::from_bytes(arguments.target)?,
                                                 v: arguments.v,
                                                 k,
-                                                // Should panic if missing.
-                                                seq: arguments.seq.expect(
-                                                    "Put mutable message to have sequence number",
-                                                ),
-                                                sig: arguments.sig.expect(
-                                                    "Put mutable message to have a signature",
-                                                ),
+                                                seq: arguments.seq.ok_or(Error::MissingMutableSequence)?,
+                                                sig: arguments.sig.ok_or(Error::MissingMutableSignature)?,
                                                 salt: arguments.salt,
                                                 cas: arguments.cas,
                                             },
                                         ),
                                     }),
                                 }
+                            } else if arguments.seq.is_some()
+                                || arguments.sig.is_some()
+                                || arguments.salt.is_some()
+                                || arguments.cas.is_some()
+                            {
+                                return Err(Error::UnexpectedMutableFieldsInImmutablePut);
                             } else {
                                 RequestSpecific {
                                     requester_id: Id::from_bytes(arguments.id)?,
@@ -1117,5 +1118,72 @@ mod tests {
         let parsed_serde_msg = internal::DHTMessage::from_bytes(bytes).unwrap();
         let parsed_msg = Message::from_serde_message(parsed_serde_msg).unwrap();
         assert_eq!(parsed_msg, original_msg);
+    }
+
+    #[test]
+    fn test_put_mutable_request_missing_sequence_is_rejected() {
+        let message = put_value_message(Some(vec![0; 32]), None, Some(vec![0; 64]), None, None);
+
+        assert!(matches!(
+            Message::from_bytes(message.to_bytes().unwrap()),
+            Err(Error::MissingMutableSequence)
+        ));
+    }
+
+    #[test]
+    fn test_put_mutable_request_missing_signature_is_rejected() {
+        let message = put_value_message(Some(vec![0; 32]), Some(0), None, None, None);
+
+        assert!(matches!(
+            Message::from_bytes(message.to_bytes().unwrap()),
+            Err(Error::MissingMutableSignature)
+        ));
+    }
+
+    #[test]
+    fn test_put_without_key_with_mutable_fields_is_rejected() {
+        let messages = [
+            put_value_message(None, Some(0), None, None, None),
+            put_value_message(None, None, Some(vec![0; 64]), None, None),
+            put_value_message(None, None, None, Some(vec![0]), None),
+            put_value_message(None, None, None, None, Some(0)),
+        ];
+
+        for message in messages {
+            assert!(matches!(
+                Message::from_bytes(message.to_bytes().unwrap()),
+                Err(Error::UnexpectedMutableFieldsInImmutablePut)
+            ));
+        }
+    }
+
+    fn put_value_message(
+        k: Option<Vec<u8>>,
+        seq: Option<i64>,
+        sig: Option<Vec<u8>>,
+        salt: Option<Vec<u8>>,
+        cas: Option<i64>,
+    ) -> internal::DHTMessage {
+        internal::DHTMessage {
+            ip: None,
+            read_only: None,
+            transaction_id: vec![1, 2],
+            version: None,
+            variant: internal::DHTMessageVariant::Request(
+                internal::DHTRequestSpecific::PutValue {
+                    arguments: internal::DHTPutValueRequestArguments {
+                        id: Id::random().to_vec(),
+                        target: Id::random().to_vec(),
+                        token: vec![0],
+                        v: vec![0],
+                        k,
+                        sig,
+                        seq,
+                        cas,
+                        salt,
+                    },
+                },
+            ),
+        }
     }
 }

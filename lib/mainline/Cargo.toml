@@ -11,6 +11,7 @@ categories = ["network-programming"]
 repository = "https://github.com/pubky/mainline"
 
 [dependencies]
+async-trait = "0.1"
 rand = "0.8.5"
 serde_bencode = "^0.2.4"
 serde = { version = "1.0.133", features = ["derive"] }
@@ -18,12 +19,20 @@ serde_bytes = "0.11.5"
 thiserror = "1.0.49"
 crc = "3.0.1"
 sha1_smol = "1.0.0"
-flume = { version = "0.11.0", features = [], default-features = false}
+flume = { version = "0.11.0", features = ["async"], default-features = false}
 ed25519-dalek = "2.1.0"
 bytes = "1.5.0"
 tracing = "0.1"
 lru = { version = "0.12.2", default-features = false }
 moka = { version = "0.12.10" , features = ["sync"]}
+dtls = { version = "=0.13.0", features = ["pem"] }
+tokio = { version = "1.41.0", features = ["rt-multi-thread", "net", "sync", "time"] }
+webrtc-util = "=0.12.0"
+rustls = { version = "0.23.27", default-features = false, features = ["ring", "std"] }
+rustls-pemfile = "2.2.0"
+rcgen = { version = "0.13.2", features = ["pem"] }
+x509-parser = { version = "0.16.0", features = ["verify"] }
+sha2 = "0.10.8"
 
 
 [dev-dependencies]
@@ -32,7 +41,7 @@ futures = "0.3.29"
 tracing-subscriber = "0.3"
 
 [features]
-async = ["flume/async"]
+async = []
 default = []
 
 [package.metadata.docs.rs]

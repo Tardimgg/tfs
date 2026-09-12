@@ -1,11 +1,13 @@
 use std::time::Instant;
 
-use mainline::{Bytes, Dht, MutableItem};
+use mainline::{Bytes, Dht};
 
 use clap::Parser;
 
 use tracing::Level;
 use tracing_subscriber;
+
+mod common;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -19,15 +21,12 @@ fn main() {
 
     let cli = Cli::parse();
 
-    Dht::builder()
-    let dht = Dht::client().unwrap().as_async();
+    let dht = Dht::client(common::dtls_config()).expect("failed to start DTLS DHT client");
     let value = Bytes::from(cli.value.to_owned());
 
     println!("\nStoring immutable data: {} ...\n", cli.value);
     println!("\n=== COLD QUERY ===");
     put_immutable(&dht, &value);
-
-    dht.put_mutable(MutableItem::with_cas(0))
 
     println!("\n=== SUBSEQUENT QUERY ===");
     put_immutable(&dht, &value);

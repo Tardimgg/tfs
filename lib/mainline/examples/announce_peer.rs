@@ -7,6 +7,8 @@ use clap::Parser;
 use tracing::Level;
 use tracing_subscriber;
 
+mod common;
+
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -21,7 +23,7 @@ fn main() {
 
     let info_hash = Id::from_str(cli.infohash.as_str()).expect("invalid infohash");
 
-    let dht = Dht::client().unwrap();
+    let dht = Dht::client(common::dtls_config()).expect("failed to start DTLS DHT client");
 
     println!("\nAnnouncing peer on an infohash: {} ...\n", cli.infohash);
 
