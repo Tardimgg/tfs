@@ -12,6 +12,8 @@ pub type SocketAddrResult = core::result::Result<SocketAddr, std::io::Error>;
 #[derive(thiserror::Error, Debug)]
 /// Mainline crate error enum.
 pub enum Error {
+    #[error("application DHT operations disabled after a fatal security failure; revocation recovery remains available")]
+    SecurityFailed,
     #[error("Generic error: {0}")]
     Generic(String),
     /// For starter, to remove as code matures.
@@ -40,6 +42,15 @@ pub enum Error {
     #[error("Invalid transaction_id: {0:?}")]
     InvalidTransactionId(Vec<u8>),
 
+    #[error("Mutable put message is missing a sequence number")]
+    MissingMutableSequence,
+
+    #[error("Mutable put message is missing a signature")]
+    MissingMutableSignature,
+
+    #[error("Immutable put message contains mutable-only fields")]
+    UnexpectedMutableFieldsInImmutablePut,
+
     #[error(transparent)]
     /// Transparent [flume::RecvError]
     Receive(#[from] flume::RecvError),
@@ -54,11 +65,29 @@ pub enum Error {
     #[error("Invalid mutable item public key")]
     InvalidMutablePublicKey,
 
+    #[error("Mutable item target does not match its public key and salt")]
+    InvalidMutableTarget,
+
+    #[error("DTLS configuration is required")]
+    MissingDtlsConfig,
+
+    #[error("Invalid DTLS identity: {0}")]
+    InvalidDtlsIdentity(String),
+
+    #[error("Invalid DTLS peer certificate: {0}")]
+    InvalidDtlsPeerCertificate(String),
+
+    #[error("DTLS transport error: {0}")]
+    Dtls(String),
+
     /// Failed to find any nodes close, usually means dht node failed to bootstrap,
     /// so the routing table is empty. Check the machine's access to UDP socket,
     /// or find better bootstrapping nodes.
-    #[error("Failed to find any nodes close to store value at")]
+    #[error("NoClosestNodes: no closest nodes available to store the value; check bootstrap peer addresses, UDP reachability, DTLS authentication warnings, and peer serving readiness")]
     NoClosestNodes,
+
+    #[error("DHT query completed without a successful response")]
+    QueryTimedOut,
 
     #[error("Query Error")]
     QueryError(ErrorSpecific),

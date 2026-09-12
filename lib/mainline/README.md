@@ -1,6 +1,8 @@
 # Mainline
 
-Simple, robust, BitTorrent's [Mainline](https://en.wikipedia.org/wiki/Mainline_DHT) DHT implementation.
+Simple, robust Kademlia DHT implementation derived from BitTorrent's [Mainline](https://en.wikipedia.org/wiki/Mainline_DHT) protocol.
+
+This fork uses mandatory DTLS 1.2 mutual authentication for KRPC and is not wire-compatible with the public plaintext Mainline network.
 
 This library is focused on being the best and simplest Rust client for Mainline, especially focused on reliable and fast time-to-first-response.
 
@@ -18,10 +20,12 @@ Check the [Examples](https://github.com/Nuhvi/mainline/tree/main/examples).
 
 Running as a client, means you can store and query for values on the DHT, but not accept any incoming requests.
 
-```rust
-use mainline::Dht;
+```rust,no_run
+use mainline::{Dht, DtlsConfig};
 
-let dht = Dht::client(); // or `Dht::default();`
+fn start_client(dtls: DtlsConfig) -> mainline::Result<Dht> {
+    Dht::client(dtls)
+}
 ```
 
 Supported BEPs:
@@ -34,10 +38,12 @@ Supported BEPs:
 
 Running as a server is the same as a client, but you also respond to incoming requests and serve as a routing and storing node, supporting the general routing of the DHT, and contributing to the storage capacity of the DHT.
 
-```rust
-use mainline::Dht;
+```rust,no_run
+use mainline::{Dht, DtlsConfig};
 
-let dht = Dht::server(); // or `Dht::builder::server().build();` for more control.
+fn start_server(dtls: DtlsConfig) -> mainline::Result<Dht> {
+    Dht::server(dtls)
+}
 ```
 
 Supported BEPs:

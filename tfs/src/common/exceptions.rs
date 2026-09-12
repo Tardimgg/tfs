@@ -11,7 +11,9 @@ pub enum ApiException {
     FileAlreadyExist,
     FolderAlreadyExist,
     BadRequest(String),
+    Conflict(String),
     Forbidden(String),
+    ServiceUnavailable(String),
     InternalError(String),
     UnknownNode(String)
 }

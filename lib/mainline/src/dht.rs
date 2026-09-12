@@ -15,6 +15,7 @@ use crate::{
     },
     error::SocketAddrResult,
     rpc::{PutResult, ReceivedFrom, ReceivedMessage, ResponseSender, Rpc},
+    security::{DtlsConfig, RevocationSnapshot},
     server::{DhtServer, Server},
     Result,
 };
@@ -67,6 +68,11 @@ impl Builder {
         self.settings.request_timeout = Some(request_timeout);
         self
     }
+
+    pub fn dtls(mut self, config: DtlsConfig) -> Self {
+        self.settings.dtls = Some(config);
+        self
+    }
 }
 
 #[derive(Debug, Default)]
@@ -80,6 +86,7 @@ pub struct DhtSettings {
     pub port: Option<u16>,
     /// Defaults to [crate::rpc::DEFAULT_REQUEST_TIMEOUT]
     pub request_timeout: Option<Duration>,
+    pub dtls: Option<DtlsConfig>,
 }
 
 impl Dht {
@@ -91,23 +98,23 @@ impl Dht {
     }
 
     /// Create a new DHT client with default bootstrap nodes.
-    pub fn client() -> Result<Self> {
-        Dht::builder().build()
+    pub fn client(dtls: DtlsConfig) -> Result<Self> {
+        Dht::builder().dtls(dtls).build()
     }
 
     /// Create a new DHT server that serves as a routing node and accepts storage requests
     /// for peers and other arbitrary data.
     ///
     /// Note: this is only useful if the node has a public IP address and is able to receive
-    /// incoming udp packets.
-    pub fn server() -> Result<Self> {
-        Dht::builder().server().build()
+    /// incoming DTLS packets.
+    pub fn server(dtls: DtlsConfig) -> Result<Self> {
+        Dht::builder().server().dtls(dtls).build()
     }
 
     /// Create a new Dht node.
     ///
     /// Could return an error if it failed to bind to the specified
-    /// port or other io errors while binding the udp socket.
+    /// port or other IO errors while binding the DTLS listener.
     pub fn new(settings: DhtSettings) -> Result<Self> {
         let (sender, receiver) = flume::bounded(32);
 
@@ -126,7 +133,7 @@ impl Dht {
 
     // === Getters ===
 
-    /// Returns the local address of the udp socket this node is listening on.
+    /// Returns the local address of the DTLS listener.
     ///
     /// Returns an error if the actor is shutdown, or if the [std::net::UdpSocket::local_addr]
     /// returned an IO error.
@@ -149,6 +156,34 @@ impl Dht {
         receiver.recv()?;
 
         Ok(())
+    }
+
+    pub fn replace_dtls_revocations(&self, snapshot: RevocationSnapshot) -> Result<bool> {
+        let (sender, receiver) = flume::bounded(1);
+        self.0
+            .send(ActorMessage::ReplaceDtlsRevocations(snapshot, sender))?;
+        Ok(receiver.recv()?)
+    }
+
+    pub fn install_protected_mutable(&self, item: MutableItem) -> Result<bool> {
+        let (sender, receiver) = flume::bounded(1);
+        self.0
+            .send(ActorMessage::InstallProtectedMutable(item, sender))?;
+        Ok(receiver.recv()?)
+    }
+
+    pub fn protected_mutable(&self, target: Id) -> Result<Option<MutableItem>> {
+        let (sender, receiver) = flume::bounded(1);
+        self.0
+            .send(ActorMessage::GetProtectedMutable(target, sender))?;
+        Ok(receiver.recv()?)
+    }
+
+    pub fn start_serving_if_protected_matches(&self, item: MutableItem) -> Result<bool> {
+        let (sender, receiver) = flume::bounded(1);
+        self.0
+            .send(ActorMessage::StartServingIfProtectedMatches(item, sender))?;
+        Ok(receiver.recv()?)
     }
 
     // === Peers ===
@@ -290,12 +325,13 @@ impl Dht {
 
 fn run(mut rpc: Rpc, server: &mut Option<Box<dyn Server>>, receiver: Receiver<ActorMessage>) {
     loop {
-        if let Ok(actor_message) = receiver.try_recv() {
-            match actor_message {
+        match receiver.try_recv() {
+            Ok(actor_message) => match actor_message {
                 ActorMessage::Shutdown(sender) => {
                     drop(receiver);
+                    drop(rpc);
                     let _ = sender.send(());
-                    break;
+                    return;
                 }
                 ActorMessage::LocalAddr(sender) => {
                     let _ = sender.send(rpc.local_addr());
@@ -306,7 +342,33 @@ fn run(mut rpc: Rpc, server: &mut Option<Box<dyn Server>>, receiver: Receiver<Ac
                 ActorMessage::Get(target, request, sender) => {
                     rpc.get(target, request, Some(sender), None)
                 }
-            }
+                ActorMessage::ReplaceDtlsRevocations(snapshot, sender) => {
+                    let _ = sender.send(rpc.replace_dtls_revocations(snapshot));
+                }
+                ActorMessage::InstallProtectedMutable(item, sender) => {
+                    let installed = server
+                        .as_mut()
+                        .is_some_and(|server| server.install_protected_mutable(item));
+                    let _ = sender.send(installed);
+                }
+                ActorMessage::GetProtectedMutable(target, sender) => {
+                    let item = server
+                        .as_ref()
+                        .and_then(|server| server.protected_mutable(&target));
+                    let _ = sender.send(item);
+                }
+                ActorMessage::StartServingIfProtectedMatches(item, sender) => {
+                    let started = server
+                        .as_mut()
+                        .is_some_and(|server| server.start_serving_if_protected_matches(&item));
+                    if started {
+                        rpc.reset_dtls_sessions();
+                    }
+                    let _ = sender.send(started);
+                }
+            },
+            Err(flume::TryRecvError::Disconnected) => return,
+            Err(flume::TryRecvError::Empty) => {}
         }
 
         let report = rpc.tick();
@@ -328,6 +390,10 @@ pub enum ActorMessage {
     Put(Id, PutRequestSpecific, Sender<PutResult>),
     Get(Id, RequestTypeSpecific, ResponseSender),
     LocalAddr(Sender<SocketAddrResult>),
+    ReplaceDtlsRevocations(RevocationSnapshot, Sender<bool>),
+    InstallProtectedMutable(MutableItem, Sender<bool>),
+    GetProtectedMutable(Id, Sender<Option<MutableItem>>),
+    StartServingIfProtectedMatches(MutableItem, Sender<bool>),
     Shutdown(Sender<()>),
 }
 
@@ -336,28 +402,68 @@ pub enum ActorMessage {
 pub struct Testnet {
     pub bootstrap: Vec<String>,
     pub nodes: Vec<Dht>,
+    client_dtls: DtlsConfig,
 }
 
 impl Testnet {
     pub fn new(count: usize) -> Result<Testnet> {
         let mut nodes: Vec<Dht> = vec![];
         let mut bootstrap = vec![];
+        let mut dtls_configs = crate::security::test_dtls_configs(count + 1)?;
+        let client_dtls = dtls_configs
+            .pop()
+            .expect("requested at least one DTLS identity");
 
         for i in 0..count {
+            let builder = Dht::builder()
+                .server()
+                .port(0)
+                .request_timeout(Duration::from_secs(5))
+                .dtls(
+                    dtls_configs
+                        .pop()
+                        .expect("one DTLS identity per node")
+                        .with_handshake_timeout(Duration::from_secs(20)),
+                );
             if i == 0 {
-                let node = Dht::builder().server().bootstrap(&[]).build()?;
+                let node = builder.bootstrap(&[]).build()?;
 
                 let addr = node.local_addr()?;
                 bootstrap.push(format!("127.0.0.1:{}", addr.port()));
 
                 nodes.push(node)
             } else {
-                let node = Dht::builder().server().bootstrap(&bootstrap).build()?;
+                let node = builder.bootstrap(&bootstrap).build()?;
                 nodes.push(node)
             }
         }
 
-        Ok(Self { bootstrap, nodes })
+        Ok(Self {
+            bootstrap,
+            nodes,
+            client_dtls,
+        })
+    }
+
+    pub fn client_builder(&self) -> Builder {
+        Dht::builder()
+            .port(0)
+            // Parallel testnets perform many certificate verifications at once.
+            .request_timeout(Duration::from_secs(5))
+            .dtls(
+                self.client_dtls
+                    .clone()
+                    .with_handshake_timeout(Duration::from_secs(20)),
+            )
+            .bootstrap(&self.bootstrap)
+    }
+
+    pub fn client_dtls_config(&self) -> DtlsConfig {
+        self.client_dtls.clone()
+    }
+
+    pub fn client_revocations(&self) -> crate::security::RevocationStore {
+        self.client_dtls.revocations().clone()
     }
 }
 
@@ -368,11 +474,41 @@ mod test {
     use ed25519_dalek::SigningKey;
 
     use super::*;
-    use crate::Error;
+    use crate::{security::test_dtls_configs, Error};
+
+    fn test_builder() -> Builder {
+        Dht::builder()
+            .port(0)
+            .dtls(test_dtls_configs(1).unwrap().pop().unwrap())
+    }
+
+    #[test]
+    fn public_ordinary_operations_do_not_succeed_after_fatal_latch() {
+        let config = test_dtls_configs(1).unwrap().remove(0);
+        let revocations = config.revocations().clone();
+        let dht = Dht::builder()
+            .port(0)
+            .bootstrap(&[])
+            .dtls(config)
+            .build()
+            .unwrap();
+        revocations.fail_security();
+        assert!(matches!(
+            dht.put_immutable(vec![1].into()),
+            Err(Error::SecurityFailed)
+        ));
+        assert!(matches!(
+            dht.announce_peer(Id::random(), None),
+            Err(Error::SecurityFailed)
+        ));
+        assert!(dht.get_immutable(Id::random()).is_err());
+        assert!(dht.get_mutable(&[1; 32], None, None).unwrap().next().is_none());
+        assert!(dht.get_peers(Id::random()).unwrap().next().is_none());
+    }
 
     #[test]
     fn shutdown() {
-        let mut dht = Dht::client().unwrap();
+        let mut dht = test_builder().build().unwrap();
 
         dht.local_addr().unwrap();
 
@@ -386,9 +522,28 @@ mod test {
     }
 
     #[test]
+    fn dropping_last_handle_stops_actor() {
+        let dht = test_builder().build().unwrap();
+        let address = dht.local_addr().unwrap();
+        drop(dht);
+
+        let mut rebound = None;
+        for _ in 0..100 {
+            match std::net::UdpSocket::bind(address) {
+                Ok(socket) => {
+                    rebound = Some(socket);
+                    break;
+                }
+                Err(_) => thread::sleep(Duration::from_millis(10)),
+            }
+        }
+        assert!(rebound.is_some());
+    }
+
+    #[test]
     fn bind_twice() {
-        let a = Dht::client().unwrap();
-        let result = Dht::builder()
+        let a = test_builder().build().unwrap();
+        let result = test_builder()
             .port(a.local_addr().unwrap().port())
             .server()
             .build();
@@ -397,17 +552,26 @@ mod test {
     }
 
     #[test]
+    fn put_without_nodes_does_not_wedge_later_puts() {
+        let dht = test_builder().bootstrap(&[]).build().unwrap();
+
+        assert!(matches!(
+            dht.put_immutable(Bytes::from_static(b"first")),
+            Err(Error::NoClosestNodes)
+        ));
+        thread::sleep(Duration::from_millis(20));
+        assert!(matches!(
+            dht.put_immutable(Bytes::from_static(b"first")),
+            Err(Error::NoClosestNodes)
+        ));
+    }
+
+    #[test]
     fn announce_get_peer() {
         let testnet = Testnet::new(10).unwrap();
 
-        let a = Dht::builder()
-            .bootstrap(&testnet.bootstrap)
-            .build()
-            .unwrap();
-        let b = Dht::builder()
-            .bootstrap(&testnet.bootstrap)
-            .build()
-            .unwrap();
+        let a = testnet.client_builder().build().unwrap();
+        let b = testnet.client_builder().build().unwrap();
 
         let info_hash = Id::random();
 
@@ -423,14 +587,8 @@ mod test {
     fn put_get_immutable() {
         let testnet = Testnet::new(10).unwrap();
 
-        let a = Dht::builder()
-            .bootstrap(&testnet.bootstrap)
-            .build()
-            .unwrap();
-        let b = Dht::builder()
-            .bootstrap(&testnet.bootstrap)
-            .build()
-            .unwrap();
+        let a = testnet.client_builder().build().unwrap();
+        let b = testnet.client_builder().build().unwrap();
 
         let value: Bytes = "Hello World!".into();
         let expected_target = Id::from_str("e5f96f6f38320f0f33959cb4d3d656452117aadb").unwrap();
@@ -446,14 +604,8 @@ mod test {
     fn put_get_mutable() {
         let testnet = Testnet::new(10).unwrap();
 
-        let a = Dht::builder()
-            .bootstrap(&testnet.bootstrap)
-            .build()
-            .unwrap();
-        let b = Dht::builder()
-            .bootstrap(&testnet.bootstrap)
-            .build()
-            .unwrap();
+        let a = testnet.client_builder().build().unwrap();
+        let b = testnet.client_builder().build().unwrap();
 
         let signer = SigningKey::from_bytes(&[
             56, 171, 62, 85, 105, 58, 155, 209, 189, 8, 59, 109, 137, 84, 84, 201, 221, 115, 7,
@@ -480,14 +632,8 @@ mod test {
     fn put_get_mutable_no_more_recent_value() {
         let testnet = Testnet::new(10).unwrap();
 
-        let a = Dht::builder()
-            .bootstrap(&testnet.bootstrap)
-            .build()
-            .unwrap();
-        let b = Dht::builder()
-            .bootstrap(&testnet.bootstrap)
-            .build()
-            .unwrap();
+        let a = testnet.client_builder().build().unwrap();
+        let b = testnet.client_builder().build().unwrap();
 
         let signer = SigningKey::from_bytes(&[
             56, 171, 62, 85, 105, 58, 155, 209, 189, 8, 59, 109, 137, 84, 84, 201, 221, 115, 7,
@@ -501,6 +647,12 @@ mod test {
 
         a.put_mutable(item.clone()).unwrap();
 
+        // Prove the value is reachable before asserting sequence filtering.
+        let reachable: Vec<_> = b
+            .get_mutable(signer.verifying_key().as_bytes(), None, None)
+            .unwrap()
+            .collect();
+        assert!(reachable.contains(&item));
         let response = b
             .get_mutable(signer.verifying_key().as_bytes(), None, Some(seq))
             .unwrap()
@@ -513,10 +665,7 @@ mod test {
     fn repeated_put_query() {
         let testnet = Testnet::new(10).unwrap();
 
-        let a = Dht::builder()
-            .bootstrap(&testnet.bootstrap)
-            .build()
-            .unwrap();
+        let a = testnet.client_builder().build().unwrap();
 
         let id = a.put_immutable(vec![1, 2, 3].into()).unwrap();
 
