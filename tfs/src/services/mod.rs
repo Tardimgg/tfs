@@ -7,3 +7,4 @@ pub mod permission_service;
 pub mod user_service;
 pub mod shared_fs;
 pub mod user_permission_service;
+pub mod dtls_revocation_registry;

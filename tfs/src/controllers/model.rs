@@ -83,7 +83,9 @@ impl ResponseError for ApiException {
             ApiException::FileAlreadyExist => StatusCode::CONFLICT,
             ApiException::FolderAlreadyExist => StatusCode::CONFLICT,
             ApiException::BadRequest(_) => StatusCode::BAD_REQUEST,
+            ApiException::Conflict(_) => StatusCode::CONFLICT,
             ApiException::Forbidden(_) => StatusCode::FORBIDDEN,
+            ApiException::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             ApiException::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiException::UnknownNode(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }

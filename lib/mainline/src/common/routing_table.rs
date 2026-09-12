@@ -56,6 +56,16 @@ impl RoutingTable {
         }
     }
 
+    pub fn remove_address(&mut self, address: &std::net::SocketAddr) {
+        for bucket in self.buckets.values_mut() {
+            bucket.nodes.retain(|node| node.address != *address);
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.buckets.clear();
+    }
+
     /// Return the closest nodes to the target while prioritizing secure nodes,
     /// as defined in [BEP_0042](https://www.bittorrent.org/beps/bep_0042.html)
     pub fn closest(&self, target: &Id) -> Vec<Node> {

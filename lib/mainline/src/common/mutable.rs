@@ -29,6 +29,7 @@ pub struct MutableItem {
 impl MutableItem {
     /// Create a new mutable item from a signing key, value, sequence number and optional salt.
     pub fn new(signer: SigningKey, value: Bytes, seq: i64, salt: Option<Bytes>) -> Self {
+        let salt = normalize_salt(salt);
         let signable = encode_signable(&seq, &value, &salt);
         let signature = signer.sign(&signable);
 
@@ -72,6 +73,7 @@ impl MutableItem {
         seq: i64,
         salt: Option<Bytes>,
     ) -> Self {
+        let salt = normalize_salt(salt);
         Self {
             target: MutableItem::target_from_key(&key, &salt),
             key,
@@ -92,6 +94,7 @@ impl MutableItem {
         salt: Option<Bytes>,
         cas: &Option<i64>,
     ) -> Result<Self> {
+        let salt = normalize_salt(salt);
         let key = VerifyingKey::try_from(key).map_err(|_| Error::InvalidMutablePublicKey)?;
 
         let signature =
@@ -100,13 +103,18 @@ impl MutableItem {
         key.verify(&encode_signable(seq, &v, &salt), &signature)
             .map_err(|_| Error::InvalidMutableSignature)?;
 
+        let derived_target = Self::target_from_key(&key.to_bytes(), &salt);
+        if target != &derived_target {
+            return Err(Error::InvalidMutableTarget);
+        }
+
         Ok(Self {
-            target: *target,
+            target: derived_target,
             key: key.to_bytes(),
             value: v,
             seq: *seq,
             signature: signature.to_bytes(),
-            salt: salt.to_owned(),
+            salt,
             cas: *cas,
         })
     }
@@ -145,7 +153,7 @@ impl MutableItem {
 pub fn encode_signable(seq: &i64, value: &Bytes, salt: &Option<Bytes>) -> Bytes {
     let mut signable = vec![];
 
-    if let Some(salt) = salt {
+    if let Some(salt) = salt.as_ref().filter(|salt| !salt.is_empty()) {
         signable.extend(format!("4:salt{}:", salt.len()).into_bytes());
         signable.extend(salt);
     }
@@ -154,6 +162,10 @@ pub fn encode_signable(seq: &i64, value: &Bytes, salt: &Option<Bytes>) -> Bytes 
     signable.extend(value);
 
     signable.into()
+}
+
+fn normalize_salt(salt: Option<Bytes>) -> Option<Bytes> {
+    salt.filter(|salt| !salt.is_empty())
 }
 
 #[cfg(test)]
@@ -175,5 +187,64 @@ mod tests {
         );
 
         assert_eq!(&*signable, b"4:salt6:foobar3:seqi4e1:v12:Hello world!");
+    }
+
+    #[test]
+    fn empty_salt_is_canonicalized_to_no_salt() {
+        let signer = SigningKey::from_bytes(&[42; 32]);
+        let item = MutableItem::new(signer, Bytes::from_static(b"value"), 1, Some(Bytes::new()));
+
+        assert_eq!(item.salt(), &None);
+        assert_eq!(
+            encode_signable(&1, item.value(), &Some(Bytes::new())),
+            encode_signable(&1, item.value(), &None)
+        );
+    }
+
+    #[test]
+    fn rejects_noncanonical_empty_salt_signature() {
+        let signer = SigningKey::from_bytes(&[42; 32]);
+        let value = Bytes::from_static(b"value");
+        let signature = signer.sign(b"4:salt0:3:seqi1e1:v5:value").to_bytes();
+        let target =
+            MutableItem::target_from_key(signer.verifying_key().as_bytes(), &Some(Bytes::new()));
+
+        assert!(matches!(
+            MutableItem::from_dht_message(
+                &target,
+                signer.verifying_key().as_bytes(),
+                value,
+                &1,
+                &signature,
+                Some(Bytes::new()),
+                &None,
+            ),
+            Err(Error::InvalidMutableSignature)
+        ));
+    }
+
+    #[test]
+    fn from_dht_message_rejects_a_signed_item_for_a_different_target() {
+        let signer = SigningKey::from_bytes(&[42; 32]);
+        let item = MutableItem::new(
+            signer,
+            Bytes::from_static(b"value"),
+            1,
+            Some(Bytes::from_static(b"salt")),
+        );
+        let mut wrong_target = item.target().bytes;
+        wrong_target[0] ^= 1;
+
+        let result = MutableItem::from_dht_message(
+            &wrong_target.into(),
+            item.key(),
+            item.value().to_owned(),
+            item.seq(),
+            item.signature(),
+            item.salt().to_owned(),
+            item.cas(),
+        );
+
+        assert!(matches!(result, Err(Error::InvalidMutableTarget)));
     }
 }

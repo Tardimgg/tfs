@@ -1,10 +1,13 @@
 use std::any::Any;
 use std::io::Write;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use async_trait::async_trait;
 use flume::{Receiver, Sender};
-use mainline::{Bytes, Dht, Id, MutableItem, SigningKey};
+use mainline::{Bytes, Dht, DtlsConfig, Id, MutableItem, RevocationSnapshot, SigningKey};
 use mainline::async_dht::AsyncDht;
+use mainline::server::{DhtServer, DhtServerSettings, MutableItemValidator};
 use tokio::io::AsyncReadExt;
 use typed_builder::TypedBuilder;
 use futures::{FutureExt, Stream, StreamExt};
@@ -21,23 +24,127 @@ use crate::services::dht_map::model::PrevSeq;
 
 pub struct DHTMap {
     dht: AsyncDht,
+    serving: Arc<AtomicBool>,
+    revocations: mainline::RevocationStore,
+    security_failure: tokio_util::sync::CancellationToken,
 }
 
 impl DHTMap {
-    pub fn new(port: u16, other: &[String]) -> Result<DHTMap, CreateError> {
+    pub fn new(port: u16, other: &[String], dtls: DtlsConfig, mutable_item_validator: Arc<dyn MutableItemValidator>) -> Result<DHTMap, CreateError> {
+        let serving = Arc::new(AtomicBool::new(false));
+        let revocations = dtls.revocations().clone();
+        let server = DhtServer::new(&DhtServerSettings {
+            mutable_item_validator: Some(mutable_item_validator),
+            request_gate: Some(serving.clone()),
+            ..DhtServerSettings::default()
+        });
         let dht = Dht::builder()
-            .server()
+            .custom_server(Box::new(server))
             .bootstrap(other)
             .port(port)
+            .dtls(dtls)
             .build()?;
         let map = DHTMap {
-            dht: dht.as_async()
+            dht: dht.as_async(),
+            serving,
+            revocations,
+            security_failure: tokio_util::sync::CancellationToken::new(),
         };
 
         return Ok(map);
     }
 
+    pub(crate) async fn start_serving_if_protected_matches(&self, key: &str, value: Vec<u8>, sequence: i64) -> Result<bool, DhtPutError> {
+        self.check_security()?;
+        validate_dht_value_size(value.len())?;
+        let item = MutableItem::new(generate_key(key)?, Bytes::from(value), sequence, None);
+        let started = self.dht.start_serving_if_protected_matches(item).await?;
+        if let Err(error) = self.check_security() {
+            self.stop_serving();
+            return Err(error.into());
+        }
+        Ok(started)
+    }
+
+    pub(crate) fn stop_serving(&self) {
+        self.serving.store(false, Ordering::Release);
+    }
+
+    pub(crate) fn fail_security(&self) {
+        self.revocations.fail_security();
+        self.security_failure.cancel();
+        self.stop_serving();
+    }
+
+    pub(crate) fn check_security(&self) -> Result<(), mainline::Error> {
+        if self.revocations.security_failed() {
+            Err(mainline::Error::SecurityFailed)
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn application_operation<T>(&self, operation: impl std::future::Future<Output = T>) -> Result<T, mainline::Error> {
+        self.check_security()?;
+        tokio::select! {
+            biased;
+            _ = self.security_failure.cancelled() => Err(mainline::Error::SecurityFailed),
+            result = operation => {
+                self.check_security()?;
+                Ok(result)
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_serving(&self) -> bool {
+        self.serving.load(Ordering::Acquire)
+    }
+
+    pub(crate) async fn local_addr(&self) -> Result<std::net::SocketAddr, mainline::Error> {
+        self.dht.local_addr().await
+    }
+
+    pub(crate) async fn get_raw_mutable(&self, key: &str) -> Result<Vec<MutableItem>, DhtGetError> {
+        if key == crate::services::dtls_revocation_registry::REVOCATION_DHT_KEY {
+            self.get_non_filtered_mainline_dht_items(key).await
+        } else {
+            self.application_operation(self.get_non_filtered_mainline_dht_items(key)).await?
+        }
+    }
+
+    pub(crate) async fn put_raw_mutable(&self, key: &str, value: Vec<u8>, sequence: i64, cas: Option<i64>) -> Result<(), DhtPutError> {
+        validate_dht_value_size(value.len())?;
+        let mut item = MutableItem::new(generate_key(key)?, Bytes::from(value), sequence, None);
+        if let Some(cas) = cas {
+            item = item.with_cas(cas);
+        }
+        if key == crate::services::dtls_revocation_registry::REVOCATION_DHT_KEY {
+            self.dht.put_mutable(item).await?;
+        } else {
+            self.application_operation(self.dht.put_mutable(item)).await??;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn replace_dtls_revocations(&self, snapshot: RevocationSnapshot) -> Result<bool, mainline::Error> {
+        self.dht.replace_dtls_revocations(snapshot).await
+    }
+
+    pub(crate) async fn install_protected_raw_mutable(&self, key: &str, value: Vec<u8>, sequence: i64) -> Result<bool, DhtPutError> {
+        validate_dht_value_size(value.len())?;
+        let item = MutableItem::new(generate_key(key)?, Bytes::from(value), sequence, None);
+        Ok(self.dht.install_protected_mutable(item).await?)
+    }
+
+    pub(crate) async fn get_local_protected_raw_mutable(&self, key: &str) -> Result<Option<MutableItem>, DhtGetError> {
+        let signing_key = generate_key(key)?;
+        let target = MutableItem::target_from_key(signing_key.verifying_key().as_bytes(), &None);
+        Ok(self.dht.protected_mutable(target).await?)
+    }
+
     async fn put_into_dht(&self, key: &str, record: &DhtRecord, seq: i64, cas: Option<i64>) -> Result<(), DhtPutError> {
+        self.check_security()?;
         let signing_key = generate_key(key)?;
 
         let encoded = proto_codec::encode_record(record)?;
@@ -47,7 +154,7 @@ impl DHTMap {
             item = item.with_cas(v);
         }
 
-        self.dht.put_mutable(item).await.default_res()?;
+        self.application_operation(self.dht.put_mutable(item)).await??;
         Ok(())
     }
 
@@ -95,7 +202,7 @@ impl DHTMap {
         Ok(versions)
     }
     async fn get_mainline_dht_item(&self, key: &str) -> Result<Option<MutableItem>, DhtGetError> {
-        let mut non_filtered = self.get_non_filtered_mainline_dht_items(key).await?;
+        let mut non_filtered = self.application_operation(self.get_non_filtered_mainline_dht_items(key)).await??;
 
         let mut fallback = 0;
         loop {
@@ -130,17 +237,17 @@ impl DHTMap {
     }
 
     pub(crate) async fn put<T: DhtMapValue>(&self, key: &str, value: &T) -> Result<(), DhtPutError> {
-        retry_fn(|| self.put_impl(key, value, PrevSeq::Any))
+        self.application_operation(retry_fn(|| self.put_impl(key, value, PrevSeq::Any))
             .retries(3)
             .custom_backoff(FixedBackoffWithJitter::new(Duration::from_secs(2), 50))
-            .await
+        ).await?
     }
 
     pub(crate) async fn put_with_seq<T: DhtMapValue>(&self, key: &str, value: &T, prev_seq: PrevSeq) -> Result<(), DhtPutError> {
-        retry_fn(|| self.put_impl(key, value, prev_seq))
+        self.application_operation(retry_fn(|| self.put_impl(key, value, prev_seq))
             .retries(3)
             .custom_backoff(FixedBackoffWithJitter::new(Duration::from_secs(2), 50))
-            .await
+        ).await?
     }
 
     pub(crate) async fn get<T: DhtMapValue>(&self, key: &str) -> Result<Option<(T, i64)>, DhtGetError> {
@@ -196,7 +303,7 @@ fn filter_mainline_items(items: &[MutableItem]) -> Vec<MutableItem> {
         .collect()
 }
 
-fn generate_key(key: &str) -> Result<SigningKey, KeyError> {
+pub(crate) fn generate_key(key: &str) -> Result<SigningKey, KeyError> {
     let mut hasher = Sha256::new();
     hasher.write(key.as_bytes())?;
 
