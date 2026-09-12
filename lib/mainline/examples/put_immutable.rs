@@ -1,11 +1,13 @@
 use std::time::Instant;
 
-use mainline::{Bytes, Dht, MutableItem};
+use mainline::{async_dht::AsyncDht, Bytes, Dht};
 
 use clap::Parser;
 
 use tracing::Level;
 use tracing_subscriber;
+
+mod common;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -19,25 +21,27 @@ fn main() {
 
     let cli = Cli::parse();
 
-    Dht::builder()
-    let dht = Dht::client().unwrap().as_async();
+    let dht = Dht::client(common::dtls_config())
+        .expect("failed to start DTLS DHT client")
+        .as_async();
     let value = Bytes::from(cli.value.to_owned());
 
     println!("\nStoring immutable data: {} ...\n", cli.value);
-    println!("\n=== COLD QUERY ===");
-    put_immutable(&dht, &value);
+    futures::executor::block_on(async {
+        println!("\n=== COLD QUERY ===");
+        put_immutable(&dht, &value).await;
 
-    dht.put_mutable(MutableItem::with_cas(0))
-
-    println!("\n=== SUBSEQUENT QUERY ===");
-    put_immutable(&dht, &value);
+        println!("\n=== SUBSEQUENT QUERY ===");
+        put_immutable(&dht, &value).await;
+    });
 }
 
-fn put_immutable(dht: &Dht, value: &Bytes) {
+async fn put_immutable(dht: &AsyncDht, value: &Bytes) {
     let start = Instant::now();
 
     let info_hash = dht
         .put_immutable(value.to_owned())
+        .await
         .expect("put immutable failed");
 
     println!(

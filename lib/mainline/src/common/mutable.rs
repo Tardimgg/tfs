@@ -106,7 +106,7 @@ impl MutableItem {
             value: v,
             seq: *seq,
             signature: signature.to_bytes(),
-            salt: salt.to_owned(),
+            salt,
             cas: *cas,
         })
     }

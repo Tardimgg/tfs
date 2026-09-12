@@ -64,11 +64,21 @@ impl PermissionType {
     }
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Eq, PartialEq)]
+pub enum Role {
+    RawDhtAccess,
+    RevocationRegistryPublisher,
+    #[serde(rename = "roles:management", alias = "roles:grant")]
+    ManageRoles,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct UserInfo {
     pub uid: u64,
     pub login: String,
-    pub hashed_password: String
+    pub hashed_password: String,
+    #[serde(default)]
+    pub roles: Vec<Role>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -101,4 +111,29 @@ pub struct FolderContentE {
     pub files: Vec<FileMeta>,
     pub is_partial: bool,
     pub id: u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Role;
+    use crate::services::virtual_fs::models::FsNode;
+
+    #[test]
+    fn persisted_user_roles_default_to_empty_and_use_the_canonical_spelling() {
+        for (record, expected, serialized_roles) in [
+            (r#"{"UserInfo":{"uid":42,"login":"alice","hashed_password":"hash"}}"#,
+                &[][..], serde_json::json!([])),
+            (r#"{"UserInfo":{"uid":42,"login":"alice","hashed_password":"hash","roles":["roles:grant"]}}"#,
+                &[Role::ManageRoles][..], serde_json::json!(["roles:management"])),
+            (r#"{"UserInfo":{"uid":42,"login":"alice","hashed_password":"hash","roles":["roles:management"]}}"#,
+                &[Role::ManageRoles][..], serde_json::json!(["roles:management"])),
+        ] {
+            let node: FsNode = serde_json::from_str(record).unwrap();
+            let FsNode::UserInfo(ref user) = node else {
+                panic!("expected user record");
+            };
+            assert_eq!(user.roles, expected, "{record}");
+            assert_eq!(serde_json::to_value(&node).unwrap()["UserInfo"]["roles"], serialized_roles, "{record}");
+        }
+    }
 }

@@ -5,11 +5,12 @@ use std::time::Duration;
 use mainline::{Dht, Id};
 
 use clap::Parser;
-use rand::random;
 
 use tracing::Level;
 use tracing_subscriber;
 use mainline::dht::DhtSettings;
+
+mod common;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -32,7 +33,9 @@ fn main() {
         server: None,
         port: Some(8000),
         request_timeout: None,
-    }).unwrap();
+        dtls: Some(common::dtls_config()),
+    })
+    .expect("failed to start DTLS DHT client");
 
 
     println!("Looking up peers for info_hash: {} ...", info_hash);
