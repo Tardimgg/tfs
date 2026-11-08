@@ -286,8 +286,12 @@ impl Heartbeat {
 
         // если в dht версия ниже, то это невозможно, бекапим запись. Если отсутствует или больше, то допустим что ок
         debug!("{:?}", self.state);
+        let mut known_keeper_count = 0;
+        let mut self_registered = false;
         let keepers_result = self.fs.get_all_keepers().await.map(|mut keepers| {
+            known_keeper_count = keepers.len();
             if let Some(index) = keepers.iter().position(|v| v == self.fs.get_id()) {
+                self_registered = true;
                 keepers.swap_remove(index);
             }
             return keepers;
@@ -299,7 +303,10 @@ impl Heartbeat {
         let replication_factor = u32::from_str(&self.config.get_val(ConfigKey::ReplicationFactor).await).unwrap();
         let network_keepers = keepers_result?;
         if network_keepers.is_empty() {
-            return Err("Too few keepers".to_string());
+            return Err(format!(
+                "Too few keepers for replication: self={:?}, known_keepers={known_keeper_count}, self_registered={self_registered}, other_keepers={}, replication_factor={replication_factor}; need at least one other registered keeper; check peer startup and DHT/DTLS warnings",
+                self.fs.get_id(), network_keepers.len()
+            ));
         }
         for path in self.state.iter() {
             self.replicate_file(path.key(), *path.value(), &network_keepers, replication_factor).await

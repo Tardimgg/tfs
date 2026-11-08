@@ -5,11 +5,12 @@ use std::time::Duration;
 use mainline::{Dht, Id};
 
 use clap::Parser;
-use rand::random;
 
 use tracing::Level;
 use tracing_subscriber;
 use mainline::dht::DhtSettings;
+
+mod common;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -25,14 +26,17 @@ fn main() {
         .init();
 
 
-    let info_hash = Id::from_str("4238af8aff56cf6e0007d9d2003bf23d33eea7c3").unwrap();
+    let info_hash = Id::from_str("4238af8aff56cf6e0007d9d2003bf23d33eea7c3")
+        .expect("example info hash must be valid");
 
     let dht = Dht::new(DhtSettings {
         bootstrap: Some(vec!["127.0.0.1:8080".to_string()]),
         server: None,
         port: Some(8000),
         request_timeout: None,
-    }).unwrap();
+        dtls: Some(common::dtls_config()),
+    })
+    .expect("failed to start DTLS DHT client");
 
 
     println!("Looking up peers for info_hash: {} ...", info_hash);
@@ -54,7 +58,7 @@ fn get_peers(dht: &Dht, info_hash: &Id) {
 
     let mut count = 0;
 
-    for peer in dht.get_peers(*info_hash).unwrap() {
+    for peer in dht.get_peers(*info_hash).expect("failed to start peer lookup") {
         if !first {
             first = true;
             println!(

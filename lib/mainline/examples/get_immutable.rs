@@ -7,6 +7,8 @@ use clap::Parser;
 use tracing::Level;
 use tracing_subscriber;
 
+mod common;
+
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -21,7 +23,7 @@ fn main() {
 
     let info_hash = Id::from_str(cli.target.as_str()).expect("Invalid info_hash");
 
-    let dht = Dht::client().unwrap();
+    let dht = Dht::client(common::dtls_config()).expect("failed to start DTLS DHT client");
 
     println!("\nLooking up immutable data: {} ...\n", cli.target);
 

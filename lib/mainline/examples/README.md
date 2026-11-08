@@ -1,5 +1,7 @@
 # Examples
 
+All examples require `DTLS_NODE_CERT_PATH`, `DTLS_NODE_KEY_PATH`, and `DTLS_ROOT_CA_PATH`.
+
 ## Announce peer
 
 ```sh

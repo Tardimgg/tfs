@@ -2,6 +2,7 @@
 
 mod query;
 mod socket;
+mod transport;
 
 use std::collections::HashMap;
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -21,6 +22,7 @@ use crate::common::{
 };
 
 use crate::error::SocketAddrResult;
+use crate::security::RevocationSnapshot;
 use crate::{dht::DhtSettings, Error, Result};
 use query::{PutQuery, Query};
 use socket::KrpcSocket;
@@ -35,6 +37,120 @@ const REFRESH_TABLE_INTERVAL: Duration = Duration::from_secs(5);
 const PING_TABLE_INTERVAL: Duration = Duration::from_secs(5);
 
 const MAX_CACHED_BUCKETS: usize = 1000;
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+    use crate::server::{DhtServer, DhtServerSettings, MutableItemValidator};
+    use std::sync::Arc;
+
+    #[derive(Debug)]
+    struct Protected(Id);
+
+    impl MutableItemValidator for Protected {
+        fn validate(&self, _: &MutableItem) -> bool {
+            true
+        }
+        fn is_protected_target(&self, target: &Id) -> bool {
+            target == &self.0
+        }
+    }
+
+    #[test]
+    fn fatal_admission_and_coalescing_do_not_upgrade_ordinary_operations_to_recovery() {
+        let item = MutableItem::new(
+            crate::SigningKey::from_bytes(&[7; 32]),
+            vec![1].into(),
+            1,
+            None,
+        );
+        let target = *item.target();
+        let config = crate::security::test_dtls_configs(1).unwrap().remove(0);
+        let revocations = config.revocations().clone();
+        let mut rpc = Rpc::new(&DhtSettings {
+            port: Some(0),
+            bootstrap: Some(Vec::new()),
+            dtls: Some(config),
+            server: Some(Box::new(DhtServer::new(&DhtServerSettings {
+                mutable_item_validator: Some(Arc::new(Protected(target))),
+                ..Default::default()
+            }))),
+            ..Default::default()
+        })
+        .unwrap();
+        let request = RequestTypeSpecific::GetValue(GetValueRequestArguments {
+            target,
+            seq: None,
+            salt: None,
+        });
+        let (sender, ordinary) = flume::unbounded();
+        rpc.get(
+            target,
+            request.clone(),
+            Some(ResponseSender::Immutable(sender)),
+            None,
+        );
+        let (sender, recovery) = flume::unbounded();
+        rpc.get(
+            target,
+            request.clone(),
+            Some(ResponseSender::Mutable(sender)),
+            None,
+        );
+        assert_eq!(rpc.queries.len(), 2);
+        rpc.queries.get_mut(&(target, true)).unwrap().response(
+            SocketAddr::from(([127, 0, 0, 1], 12345)),
+            Response::Mutable(item.clone()),
+        );
+        assert_eq!(recovery.try_recv().unwrap(), item);
+        assert!(ordinary.try_recv().is_err());
+        revocations.fail_security();
+        let (sender, replay) = flume::unbounded();
+        rpc.get(
+            target,
+            request.clone(),
+            Some(ResponseSender::Immutable(sender)),
+            None,
+        );
+        assert!(replay.is_disconnected());
+        let (sender, replay) = flume::unbounded();
+        rpc.get(target, request, Some(ResponseSender::Mutable(sender)), None);
+        assert_eq!(replay.try_recv().unwrap(), item);
+
+        let (sender, put) = flume::bounded(1);
+        rpc.put(
+            target,
+            PutRequestSpecific::PutImmutable(crate::common::PutImmutableRequestArguments {
+                target,
+                v: vec![1],
+            }),
+            Some(sender),
+        );
+        assert!(matches!(put.recv().unwrap(), Err(Error::SecurityFailed)));
+        let (sender, protected_put) = flume::bounded(1);
+        rpc.put(
+            target,
+            PutRequestSpecific::PutMutable(crate::common::PutMutableRequestArguments {
+                target,
+                v: item.value().to_vec(),
+                k: item.key().to_vec(),
+                sig: item.signature().to_vec(),
+                seq: 1,
+                salt: None,
+                cas: None,
+            }),
+            Some(sender),
+        );
+        assert!(rpc.put_queries.contains_key(&(target, true)));
+        rpc.tick();
+        assert!(!rpc.queries.contains_key(&(target, false)));
+        assert!(ordinary.is_disconnected());
+        assert!(matches!(
+            protected_put.recv().unwrap(),
+            Err(Error::NoClosestNodes)
+        ));
+    }
+}
 
 #[derive(Debug)]
 /// Internal Rpc called in the Dht thread loop, useful to create your own actor setup.
@@ -56,10 +172,12 @@ pub struct Rpc {
     closest_nodes: LruCache<Id, Vec<Node>>,
 
     // Active Queries
-    queries: HashMap<Id, Query>,
+    // The second key component is the admitted recovery class, not inferred
+    // from an existing query sharing the same target.
+    queries: HashMap<(Id, bool), Query>,
     /// Put queries are special, since they have to wait for a corresponing
     /// get query to finish, update the closest_nodes, then `query_all` these.
-    put_queries: HashMap<Id, PutQuery>,
+    put_queries: HashMap<(Id, bool), PutQuery>,
 }
 
 impl Rpc {
@@ -158,14 +276,21 @@ impl Rpc {
             if is_done {
                 let closest = query.closest();
 
-                if let Some(put_query) = self.put_queries.get_mut(id) {
-                    put_query.start(&mut self.socket, closest.clone())
+                if let Some(put_query) = self
+                    .put_queries
+                    .get_mut(id)
+                    .filter(|_| !done_put_queries.contains(id))
+                {
+                    put_query.start(&mut self.socket, closest.clone());
+                    if put_query.tick(&mut self.socket) {
+                        done_put_queries.push(*id);
+                    }
                 }
 
                 closest_nodes.push((*id, closest));
                 done_get_queries.push(*id);
 
-                if id == &self_id && table_size == 0 {
+                if id.0 == self_id && table_size == 0 {
                     error!("Could not bootstrap the routing table");
                 } else {
                     debug!(table_size, "Populated the routing table");
@@ -211,10 +336,16 @@ impl Rpc {
                     }),
             }
         });
+        for address in self.socket.take_revoked_addresses() {
+            self.routing_table.remove_address(&address);
+            for nodes in self.closest_nodes.iter_mut().map(|(_, nodes)| nodes) {
+                nodes.retain(|node| node.address != address);
+            }
+        }
 
         RpcTickReport {
-            done_get_queries,
-            done_put_queries,
+            done_get_queries: done_get_queries.into_iter().map(|(id, _)| id).collect(),
+            done_put_queries: done_put_queries.into_iter().map(|(id, _)| id).collect(),
             received_from,
         }
     }
@@ -239,6 +370,21 @@ impl Rpc {
         self.socket.error(address, transaction_id, error)
     }
 
+    pub fn replace_dtls_revocations(&mut self, snapshot: RevocationSnapshot) -> bool {
+        let previous_sequence = self.socket.revocation_sequence();
+        let sequence = snapshot.sequence;
+        let applied = self.socket.replace_revocations(snapshot);
+        if applied && sequence > previous_sequence {
+            self.routing_table.clear();
+            self.closest_nodes.clear();
+        }
+        applied
+    }
+
+    pub(crate) fn reset_dtls_sessions(&mut self) {
+        self.socket.reset_sessions();
+    }
+
     /// Store a value in the closest nodes, optionally trigger a lookup query if
     /// the cached closest_nodes aren't fresh enough.
     ///
@@ -249,7 +395,20 @@ impl Rpc {
         request: PutRequestSpecific,
         sender: Option<Sender<PutResult>>,
     ) {
-        if self.put_queries.contains_key(&target) {
+        let recovery = self.socket.is_recovery_request(&RequestSpecific {
+            requester_id: self.id,
+            request_type: RequestTypeSpecific::Put(crate::common::PutRequest {
+                token: Vec::new(),
+                put_request_type: request.clone(),
+            }),
+        });
+        if !recovery && self.socket.revocations().security_failed() {
+            if let Some(sender) = sender {
+                let _ = sender.try_send(Err(Error::SecurityFailed));
+            }
+            return;
+        }
+        if self.put_queries.contains_key(&(target, recovery)) {
             if let Some(sender) = sender {
                 let _ = sender.send(Err(Error::PutQueryIsInflight(target)));
             };
@@ -259,7 +418,13 @@ impl Rpc {
             return;
         }
 
-        let mut query = PutQuery::new(target, request.clone(), sender);
+        let mut query = PutQuery::new(
+            target,
+            request.clone(),
+            sender,
+            self.socket.revocations(),
+            recovery,
+        );
 
         if let Some(closest_nodes) = self
             .closest_nodes
@@ -273,7 +438,7 @@ impl Rpc {
                 _ => None,
             };
 
-            self.get(
+            self.get_with_recovery(
                 target,
                 RequestTypeSpecific::GetValue(GetValueRequestArguments {
                     target,
@@ -282,10 +447,11 @@ impl Rpc {
                 }),
                 None,
                 None,
+                recovery,
             );
         };
 
-        self.put_queries.insert(target, query);
+        self.put_queries.insert((target, recovery), query);
     }
 
     /// Send a message to closer and closer nodes until we can't find any more nodes.
@@ -306,8 +472,29 @@ impl Rpc {
         sender: Option<ResponseSender>,
         extra_nodes: Option<Vec<SocketAddr>>,
     ) {
+        // GET_VALUE is shared by immutable and mutable APIs on the wire. Only
+        // a mutable consumer (or an internal protected PUT lookup) is recovery.
+        let recovery = matches!(&sender, Some(ResponseSender::Mutable(_)))
+            && self.socket.is_recovery_request(&RequestSpecific {
+                requester_id: self.id,
+                request_type: request.clone(),
+            });
+        self.get_with_recovery(target, request, sender, extra_nodes, recovery);
+    }
+
+    fn get_with_recovery(
+        &mut self,
+        target: Id,
+        request: RequestTypeSpecific,
+        sender: Option<ResponseSender>,
+        extra_nodes: Option<Vec<SocketAddr>>,
+        recovery: bool,
+    ) {
+        if !recovery && self.socket.revocations().security_failed() {
+            return;
+        }
         // If query is still active, add the sender to it.
-        if let Some(query) = self.queries.get_mut(&target) {
+        if let Some(query) = self.queries.get_mut(&(target, recovery)) {
             if let Some(sender) = sender {
                 query.add_sender(sender)
             };
@@ -320,6 +507,8 @@ impl Rpc {
                 requester_id: self.id,
                 request_type: request,
             },
+            self.socket.revocations(),
+            recovery,
         );
 
         if let Some(sender) = sender {
@@ -358,16 +547,12 @@ impl Rpc {
         // After adding the nodes, we need to start the query.
         query.start(&mut self.socket);
 
-        self.queries.insert(target, query);
+        self.queries.insert((target, recovery), query);
     }
 
     // === Private Methods ===
 
     fn handle_response(&mut self, from: SocketAddr, message: &Message) -> Option<QueryResponse> {
-        if message.read_only {
-            return None;
-        };
-
         // If the response looks like a Ping response, check StoreQueries for the transaction_id.
         if let Some(query) = self
             .put_queries
@@ -392,6 +577,9 @@ impl Rpc {
             .values_mut()
             .find(|query| query.inflight(message.transaction_id))
         {
+            if !query.allowed() {
+                return None;
+            }
             if let Some(nodes) = message.get_closer_nodes() {
                 for node in nodes {
                     query.add_candidate(node);

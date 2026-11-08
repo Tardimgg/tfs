@@ -12,6 +12,7 @@ use crate::{
     dht::{ActorMessage, Dht},
     error::SocketAddrResult,
     rpc::{PutResult, ResponseSender},
+    security::RevocationSnapshot,
     Result,
 };
 
@@ -29,7 +30,7 @@ pub struct AsyncDht(Dht);
 impl AsyncDht {
     // === Getters ===
 
-    /// Returns the local address of the udp socket this node is listening on.
+    /// Returns the local address of the DTLS listener.
     ///
     /// Returns an error if the actor is shutdown, or if the [std::net::UdpSocket::local_addr]
     /// returned an IO error.
@@ -52,6 +53,38 @@ impl AsyncDht {
         receiver.recv_async().await?;
 
         Ok(())
+    }
+
+    pub async fn replace_dtls_revocations(&self, snapshot: RevocationSnapshot) -> Result<bool> {
+        let (sender, receiver) = flume::bounded(1);
+        self.0
+             .0
+            .send(ActorMessage::ReplaceDtlsRevocations(snapshot, sender))?;
+        Ok(receiver.recv_async().await?)
+    }
+
+    pub async fn install_protected_mutable(&self, item: MutableItem) -> Result<bool> {
+        let (sender, receiver) = flume::bounded(1);
+        self.0
+             .0
+            .send(ActorMessage::InstallProtectedMutable(item, sender))?;
+        Ok(receiver.recv_async().await?)
+    }
+
+    pub async fn protected_mutable(&self, target: Id) -> Result<Option<MutableItem>> {
+        let (sender, receiver) = flume::bounded(1);
+        self.0
+             .0
+            .send(ActorMessage::GetProtectedMutable(target, sender))?;
+        Ok(receiver.recv_async().await?)
+    }
+
+    pub async fn start_serving_if_protected_matches(&self, item: MutableItem) -> Result<bool> {
+        let (sender, receiver) = flume::bounded(1);
+        self.0
+             .0
+            .send(ActorMessage::StartServingIfProtectedMatches(item, sender))?;
+        Ok(receiver.recv_async().await?)
     }
 
     // === Peers ===
@@ -201,15 +234,52 @@ mod test {
     use ed25519_dalek::SigningKey;
     use futures::StreamExt;
 
-    use crate::dht::Testnet;
+    use crate::{dht::Testnet, security::test_dtls_configs};
 
     use super::*;
     use crate::Error;
 
     #[test]
+    fn public_async_operations_do_not_succeed_after_fatal_latch() {
+        futures::executor::block_on(async {
+            let config = test_dtls_configs(1).unwrap().remove(0);
+            let revocations = config.revocations().clone();
+            let dht = Dht::builder()
+                .port(0)
+                .bootstrap(&[])
+                .dtls(config)
+                .build()
+                .unwrap()
+                .as_async();
+            revocations.fail_security();
+            assert!(matches!(
+                dht.put_immutable(vec![1].into()).await,
+                Err(Error::SecurityFailed)
+            ));
+            assert!(matches!(
+                dht.announce_peer(Id::random(), None).await,
+                Err(Error::SecurityFailed)
+            ));
+            assert!(dht.get_immutable(Id::random()).await.is_err());
+            assert!(dht
+                .get_mutable(&[1; 32], None, None)
+                .unwrap()
+                .next()
+                .await
+                .is_none());
+            assert!(dht.get_peers(Id::random()).unwrap().next().await.is_none());
+        });
+    }
+
+    #[test]
     fn shutdown() {
         async fn test() {
-            let mut dht = Dht::client().unwrap().as_async();
+            let mut dht = Dht::builder()
+                .port(0)
+                .dtls(test_dtls_configs(1).unwrap().pop().unwrap())
+                .build()
+                .unwrap()
+                .as_async();
 
             dht.local_addr().await.unwrap();
 
@@ -229,16 +299,8 @@ mod test {
         async fn test() {
             let testnet = Testnet::new(10).unwrap();
 
-            let a = Dht::builder()
-                .bootstrap(&testnet.bootstrap)
-                .build()
-                .unwrap()
-                .as_async();
-            let b = Dht::builder()
-                .bootstrap(&testnet.bootstrap)
-                .build()
-                .unwrap()
-                .as_async();
+            let a = testnet.client_builder().build().unwrap().as_async();
+            let b = testnet.client_builder().build().unwrap().as_async();
 
             let info_hash = Id::random();
 
@@ -264,16 +326,8 @@ mod test {
         async fn test() {
             let testnet = Testnet::new(10).unwrap();
 
-            let a = Dht::builder()
-                .bootstrap(&testnet.bootstrap)
-                .build()
-                .unwrap()
-                .as_async();
-            let b = Dht::builder()
-                .bootstrap(&testnet.bootstrap)
-                .build()
-                .unwrap()
-                .as_async();
+            let a = testnet.client_builder().build().unwrap().as_async();
+            let b = testnet.client_builder().build().unwrap().as_async();
 
             let value: Bytes = "Hello World!".into();
             let expected_target = Id::from_str("e5f96f6f38320f0f33959cb4d3d656452117aadb").unwrap();
@@ -293,16 +347,8 @@ mod test {
         async fn test() {
             let testnet = Testnet::new(10).unwrap();
 
-            let a = Dht::builder()
-                .bootstrap(&testnet.bootstrap)
-                .build()
-                .unwrap()
-                .as_async();
-            let b = Dht::builder()
-                .bootstrap(&testnet.bootstrap)
-                .build()
-                .unwrap()
-                .as_async();
+            let a = testnet.client_builder().build().unwrap().as_async();
+            let b = testnet.client_builder().build().unwrap().as_async();
 
             let signer = SigningKey::from_bytes(&[
                 56, 171, 62, 85, 105, 58, 155, 209, 189, 8, 59, 109, 137, 84, 84, 201, 221, 115, 7,
@@ -334,16 +380,8 @@ mod test {
         async fn test() {
             let testnet = Testnet::new(10).unwrap();
 
-            let a = Dht::builder()
-                .bootstrap(&testnet.bootstrap)
-                .build()
-                .unwrap()
-                .as_async();
-            let b = Dht::builder()
-                .bootstrap(&testnet.bootstrap)
-                .build()
-                .unwrap()
-                .as_async();
+            let a = testnet.client_builder().build().unwrap().as_async();
+            let b = testnet.client_builder().build().unwrap().as_async();
 
             let signer = SigningKey::from_bytes(&[
                 56, 171, 62, 85, 105, 58, 155, 209, 189, 8, 59, 109, 137, 84, 84, 201, 221, 115, 7,
@@ -357,6 +395,13 @@ mod test {
 
             a.put_mutable(item.clone()).await.unwrap();
 
+            // Prove the value is reachable before asserting sequence filtering.
+            let reachable: Vec<_> = b
+                .get_mutable(signer.verifying_key().as_bytes(), None, None)
+                .unwrap()
+                .collect()
+                .await;
+            assert!(reachable.contains(&item));
             let response = b
                 .get_mutable(signer.verifying_key().as_bytes(), None, Some(seq))
                 .unwrap()
@@ -374,11 +419,7 @@ mod test {
         async fn test() {
             let testnet = Testnet::new(10).unwrap();
 
-            let a = Dht::builder()
-                .bootstrap(&testnet.bootstrap)
-                .build()
-                .unwrap()
-                .as_async();
+            let a = testnet.client_builder().build().unwrap().as_async();
 
             let first = a.put_immutable(vec![1, 2, 3].into());
             let second = a.put_immutable(vec![1, 2, 3].into());

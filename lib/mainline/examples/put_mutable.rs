@@ -10,6 +10,8 @@ use clap::Parser;
 use tracing::Level;
 use tracing_subscriber;
 
+mod common;
+
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -24,7 +26,7 @@ fn main() {
 
     let cli = Cli::parse();
 
-    let dht = Dht::client().unwrap();
+    let dht = Dht::client(common::dtls_config()).expect("failed to start DTLS DHT client");
 
     let signer = from_hex(cli.secret_key);
 

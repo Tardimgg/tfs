@@ -6,6 +6,8 @@ use mainline::{
 };
 use tracing::{info, instrument, Level};
 
+mod common;
+
 #[derive(Debug, Default)]
 struct MyCustomServer {
     inner: DhtServer,
@@ -34,10 +36,11 @@ impl Server for MyCustomServer {
 fn main() {
     tracing_subscriber::fmt().with_max_level(Level::INFO).init();
 
-    Dht::builder()
+    let _dht = Dht::builder()
         .custom_server(Box::<MyCustomServer>::default())
+        .dtls(common::dtls_config())
         .build()
-        .unwrap();
+        .expect("failed to start custom DTLS DHT server");
 
     sleep(Duration::from_secs(5))
 }

@@ -79,7 +79,9 @@ impl VirtualFS {
             state_updater,
             client: InternalCommunication::new(config)
         };
-        instance.init().await;
+        if let Err(error) = instance.init().await {
+            log::warn!("VirtualFS keeper initialization failed after retries: self={:?}, error={error}; heartbeat will retry", instance.id);
+        }
         instance
     }
 
@@ -104,7 +106,10 @@ impl VirtualFS {
             }
 
             let res = self.dht_map.put_with_seq(&location_prefix, &new_keepers, PrevSeq::Seq(prev_seq)).await;
-            println!("success init {:?}", res);
+            match &res {
+                Ok(_) => log::debug!("VirtualFS keeper registration succeeded: self={:?}, keepers={}", self.id, new_keepers.len()),
+                Err(error) => log::warn!("VirtualFS keeper registration failed: self={:?}, keepers={}, error={error}", self.id, new_keepers.len()),
+            }
             return res;
         }).retries(3)
             .custom_backoff(FixedBackoffWithJitter::new(Duration::from_secs(2), 30))

@@ -79,6 +79,8 @@ pub enum DhtPutError {
     SequenceOverflow(i64),
     #[error(transparent)]
     Codec(#[from] DhtCodecError),
+    #[error(transparent)]
+    Mainline(#[from] mainline::Error),
     #[error("invalid internal state: {0}")]
     InternalError(String)
 }
