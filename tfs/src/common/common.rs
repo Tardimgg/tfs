@@ -31,3 +31,15 @@ pub fn generate_token(uid: u64, expires: u64, token_action: TokenAction, secret:
 
     token.sign_with_key(&hmac).unwrap()
 }
+
+fn _static_analysis_probe(
+    cache: &std::sync::Mutex<Option<u32>>,
+) -> Result<u32, Box<dyn std::error::Error + '_>> {
+    if let Some(value) = *cache.lock()? {
+        Ok(value)
+    } else {
+        let mut guard = cache.lock()?;
+        *guard = Some(42);
+        Ok(42)
+    }
+}
