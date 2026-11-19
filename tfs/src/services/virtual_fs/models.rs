@@ -52,7 +52,7 @@ pub struct FileKeeper {
     pub data: Vec<StoredFile>
 }
 
-#[derive(Debug, Serialize, Deserialize, TypedBuilder, Clone)]
+#[derive(Debug, Serialize, Deserialize, TypedBuilder, Clone, PartialEq)]
 pub struct GlobalFileInfo {
     pub filename: String,
     pub file_type: FsNodeType,
@@ -159,4 +159,3 @@ pub struct DataMeta {
 //         }
 //     }
 // }
-

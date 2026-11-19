@@ -8,6 +8,7 @@ mod error;
 pub mod async_dht;
 pub mod dht;
 pub mod rpc;
+pub mod security;
 pub mod server;
 
 pub use crate::common::{Id, MutableItem};
@@ -16,3 +17,4 @@ pub use dht::{Dht, Testnet};
 
 pub use ed25519_dalek::SigningKey;
 pub use error::{Error, Result};
+pub use security::{CertificateId, DtlsConfig, RevocationSnapshot, RevocationStore};

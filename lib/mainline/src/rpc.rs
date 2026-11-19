@@ -2,6 +2,7 @@
 
 mod query;
 mod socket;
+mod transport;
 
 use std::collections::HashMap;
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -21,6 +22,7 @@ use crate::common::{
 };
 
 use crate::error::SocketAddrResult;
+use crate::security::RevocationSnapshot;
 use crate::{dht::DhtSettings, Error, Result};
 use query::{PutQuery, Query};
 use socket::KrpcSocket;
@@ -35,6 +37,70 @@ const REFRESH_TABLE_INTERVAL: Duration = Duration::from_secs(5);
 const PING_TABLE_INTERVAL: Duration = Duration::from_secs(5);
 
 const MAX_CACHED_BUCKETS: usize = 1000;
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+    use crate::server::{DhtServer, DhtServerSettings, MutableItemValidator};
+    use std::sync::Arc;
+
+    #[derive(Debug)]
+    struct Protected(Id);
+
+    impl MutableItemValidator for Protected {
+        fn validate(&self, _: &MutableItem) -> bool {
+            true
+        }
+        fn is_protected(&self, item: &MutableItem) -> bool {
+            item.target() == &self.0
+        }
+    }
+
+    #[test]
+    fn protected_value_is_served_only_while_open_and_trusted() {
+        let item = MutableItem::new(
+            crate::SigningKey::from_bytes(&[7; 32]),
+            vec![1].into(),
+            1,
+            None,
+        );
+        let target = *item.target();
+        let mut configs = crate::security::test_dtls_configs(2).unwrap();
+        let config = configs.pop().unwrap();
+        let revocations = config.revocations().clone();
+        let gate = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let server = crate::Dht::new(DhtSettings {
+            port: Some(0),
+            bootstrap: Some(Vec::new()),
+            dtls: Some(config),
+            server: Some(Box::new(DhtServer::new(&DhtServerSettings {
+                mutable_item_validator: Some(Arc::new(Protected(target))),
+                request_gate: Some(gate.clone()),
+                ..Default::default()
+            }))),
+            ..Default::default()
+        })
+        .unwrap();
+        let client_config = configs.pop().unwrap();
+        let address = format!("127.0.0.1:{}", server.local_addr().unwrap().port());
+        let fetch = || {
+            let client = crate::Dht::builder().port(0).dtls(client_config.clone())
+                .bootstrap(std::slice::from_ref(&address)).build().unwrap();
+            client.get_mutable(item.key(), None, None).unwrap().next()
+        };
+        assert!(server.install_protected_mutable(item.clone()).unwrap());
+        assert_eq!(fetch(), None);
+        assert!(server.start_serving_if_protected_matches(item.clone()).unwrap());
+        assert_eq!(fetch(), Some(item.clone()));
+
+        revocations.fail_security();
+        assert_eq!(fetch(), None);
+        assert!(matches!(server.put_mutable(item.clone()), Err(Error::SecurityFailed)));
+        gate.store(false, std::sync::atomic::Ordering::Release);
+        assert!(!server.start_serving_if_protected_matches(item).unwrap());
+        assert!(!gate.load(std::sync::atomic::Ordering::Acquire));
+    }
+}
 
 #[derive(Debug)]
 /// Internal Rpc called in the Dht thread loop, useful to create your own actor setup.
@@ -127,6 +193,10 @@ impl Rpc {
         &self.routing_table
     }
 
+    pub(crate) fn revocations(&self) -> crate::security::RevocationStore {
+        self.socket.revocations()
+    }
+
     // === Public Methods ===
 
     /// Advance the inflight queries, receive incoming requests,
@@ -148,32 +218,31 @@ impl Rpc {
         let self_id = self.id;
         let table_size = self.routing_table.size();
 
-        let mut closest_nodes = Vec::with_capacity(self.queries.len());
         let mut done_get_queries = Vec::with_capacity(self.queries.len());
-        // let mut done_put_queries = Vec::with_capacity(self.put_queries.len());
 
         for (id, query) in self.queries.iter_mut() {
             let is_done = query.tick(&mut self.socket);
 
             if is_done {
-                let closest = query.closest();
-
-                if let Some(put_query) = self.put_queries.get_mut(id) {
-                    put_query.start(&mut self.socket, closest.clone())
+                if let Some(put_query) = self
+                    .put_queries
+                    .get_mut(id)
+                    .filter(|_| !done_put_queries.contains(id))
+                {
+                    put_query.start(&mut self.socket, query.closest());
+                    if put_query.tick(&mut self.socket) {
+                        done_put_queries.push(*id);
+                    }
                 }
 
-                closest_nodes.push((*id, closest));
                 done_get_queries.push(*id);
 
-                if id == &self_id && table_size == 0 {
+                if *id == self_id && table_size == 0 {
                     error!("Could not bootstrap the routing table");
                 } else {
                     debug!(table_size, "Populated the routing table");
                 };
             };
-        }
-        for (id, nodes) in closest_nodes {
-            // self.closest_nodes.put(id, nodes);
         }
 
         // === Remove done queries ===
@@ -211,11 +280,17 @@ impl Rpc {
                     }),
             }
         });
+        for address in self.socket.take_revoked_addresses() {
+            self.routing_table.remove_address(&address);
+            for nodes in self.closest_nodes.iter_mut().map(|(_, nodes)| nodes) {
+                nodes.retain(|node| node.address != address);
+            }
+        }
 
         RpcTickReport {
             done_get_queries,
             done_put_queries,
-            received_from,
+            received_from: self.revocations().with_trust(|| received_from).flatten(),
         }
     }
 
@@ -239,6 +314,21 @@ impl Rpc {
         self.socket.error(address, transaction_id, error)
     }
 
+    pub fn replace_dtls_revocations(&mut self, snapshot: RevocationSnapshot) -> bool {
+        let previous_sequence = self.socket.revocation_sequence();
+        let sequence = snapshot.sequence;
+        let applied = self.socket.replace_revocations(snapshot);
+        if applied && sequence > previous_sequence {
+            self.routing_table.clear();
+            self.closest_nodes.clear();
+        }
+        applied
+    }
+
+    pub(crate) fn reset_dtls_sessions(&mut self) {
+        self.socket.reset_sessions();
+    }
+
     /// Store a value in the closest nodes, optionally trigger a lookup query if
     /// the cached closest_nodes aren't fresh enough.
     ///
@@ -249,9 +339,15 @@ impl Rpc {
         request: PutRequestSpecific,
         sender: Option<Sender<PutResult>>,
     ) {
+        if self.socket.revocations().security_failed() {
+            if let Some(sender) = sender {
+                let _ = sender.try_send(Err(Error::SecurityFailed));
+            }
+            return;
+        }
         if self.put_queries.contains_key(&target) {
             if let Some(sender) = sender {
-                let _ = sender.send(Err(Error::PutQueryIsInflight(target)));
+                query::deliver_put(&self.revocations(), sender, Err(Error::PutQueryIsInflight(target)));
             };
 
             debug!(?target, "Put query for the same target is already inflight");
@@ -259,7 +355,12 @@ impl Rpc {
             return;
         }
 
-        let mut query = PutQuery::new(target, request.clone(), sender);
+        let mut query = PutQuery::new(
+            target,
+            request.clone(),
+            sender,
+            self.socket.revocations(),
+        );
 
         if let Some(closest_nodes) = self
             .closest_nodes
@@ -306,6 +407,9 @@ impl Rpc {
         sender: Option<ResponseSender>,
         extra_nodes: Option<Vec<SocketAddr>>,
     ) {
+        if self.socket.revocations().security_failed() {
+            return;
+        }
         // If query is still active, add the sender to it.
         if let Some(query) = self.queries.get_mut(&target) {
             if let Some(sender) = sender {
@@ -320,6 +424,7 @@ impl Rpc {
                 requester_id: self.id,
                 request_type: request,
             },
+            self.socket.revocations(),
         );
 
         if let Some(sender) = sender {
@@ -364,10 +469,6 @@ impl Rpc {
     // === Private Methods ===
 
     fn handle_response(&mut self, from: SocketAddr, message: &Message) -> Option<QueryResponse> {
-        if message.read_only {
-            return None;
-        };
-
         // If the response looks like a Ping response, check StoreQueries for the transaction_id.
         if let Some(query) = self
             .put_queries
@@ -392,6 +493,9 @@ impl Rpc {
             .values_mut()
             .find(|query| query.inflight(message.transaction_id))
         {
+            if !query.allowed() {
+                return None;
+            }
             if let Some(nodes) = message.get_closer_nodes() {
                 for node in nodes {
                     query.add_candidate(node);

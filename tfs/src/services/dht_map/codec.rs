@@ -8,7 +8,7 @@ use crate::services::dht_map::model::DhtNodeId;
 use crate::services::rebac::models::{Permission, RebacKey};
 use crate::services::virtual_fs::models::{FileKeeper, FsNodeType, GlobalFileInfo, StoredFile};
 
-pub(super) const MAX_DHT_VALUE_SIZE: usize = 1000;
+pub(crate) const MAX_DHT_VALUE_SIZE: usize = 1000;
 const MAX_DECOMPRESSED_RECORD_SIZE: usize = 64 * 1024;
 const FORMAT_VERSION: u32 = 1;
 const ZSTD_LEVEL: i32 = 3;
@@ -264,14 +264,22 @@ impl_dht_value!(GlobalFileInfo, GlobalFileInfo, "GlobalFileInfo");
 impl_dht_value!(Vec<Permission>, PermissionList, "Vec<Permission>");
 
 pub(super) fn encode_record(record: &DhtRecord) -> Result<Vec<u8>, DhtCodecError> {
-    let record = record.encode_to_vec();
+    encode_enveloped_message(record)
+}
+
+pub(crate) fn encode_enveloped_message<M: Message>(message: &M) -> Result<Vec<u8>, DhtCodecError> {
+    encode_enveloped_message_with_level(message, ZSTD_LEVEL)
+}
+
+pub(crate) fn encode_enveloped_message_with_level<M: Message>(message: &M, compression_level: i32) -> Result<Vec<u8>, DhtCodecError> {
+    let record = message.encode_to_vec();
     if record.len() > MAX_DECOMPRESSED_RECORD_SIZE {
         return Err(DhtCodecError::UncompressedValueTooLarge {
             size: record.len(),
             max: MAX_DECOMPRESSED_RECORD_SIZE,
         });
     }
-    let compressed_record = zstd::bulk::compress(&record, ZSTD_LEVEL)?;
+    let compressed_record = zstd::bulk::compress(&record, compression_level)?;
     Ok(DhtRecordEnvelope {
         version: FORMAT_VERSION,
         compressed_record,
@@ -280,6 +288,10 @@ pub(super) fn encode_record(record: &DhtRecord) -> Result<Vec<u8>, DhtCodecError
 }
 
 pub(super) fn decode_record(value: &[u8]) -> Result<DhtRecord, DhtCodecError> {
+    decode_enveloped_message(value)
+}
+
+pub(crate) fn decode_enveloped_message<M: Message + Default>(value: &[u8]) -> Result<M, DhtCodecError> {
     if value.len() > MAX_DHT_VALUE_SIZE {
         return Err(DhtCodecError::RecordEnvelopeTooLarge {
             size: value.len(),
@@ -298,7 +310,7 @@ pub(super) fn decode_record(value: &[u8]) -> Result<DhtRecord, DhtCodecError> {
         &envelope.compressed_record,
         MAX_DECOMPRESSED_RECORD_SIZE,
     )?;
-    Ok(DhtRecord::decode(record.as_slice())?)
+    Ok(M::decode(record.as_slice())?)
 }
 
 impl From<&DhtNodeId> for ProtoDhtNodeId {

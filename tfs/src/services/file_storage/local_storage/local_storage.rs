@@ -105,7 +105,7 @@ impl FileStorage for LocalStorage {
             match item {
                 Ok(bytes) => {
                     real_size += bytes.len();
-                    writer.write_all(bytes.as_ref()).await.unwrap();
+                    writer.write_all(bytes.as_ref()).await.default_res()?;
                 }
                 Err(error) => {
                     writer.flush().await.err().iter()
@@ -121,10 +121,14 @@ impl FileStorage for LocalStorage {
                 }
             }
         }
-        writer.flush().await.err().iter()
-            .for_each(|e| println!("error when flush the file({}): {}", path, e.to_string()));
-        writer.get_ref().sync_all().await.err().iter()
-            .for_each(|e| println!("error when sync_all() the file(){}: {}", path, e.to_string()));
+        writer.flush().await.default_res()?;
+        writer.get_ref().sync_all().await.default_res()?;
+        for directory in root.ancestors() {
+            tokio::fs::File::open(directory).await.default_res()?.sync_all().await.default_res()?;
+            if directory == Path::new(&self.base_path) {
+                break;
+            }
+        }
 
         if let EndOfFileRange::ByteIndex(last_byte) =  range.1 {
             if last_byte - range.0 + 1 != real_size as u64 {
@@ -178,9 +182,9 @@ impl FileStorage for LocalStorage {
         let file_path = root_folder.join(PathBuf::from(String::from(final_version.clone())));
         let file_path_ref = &file_path;
 
-        let res = join_all(ranges_o.unwrap_or(&[(0, EndOfFileRange::LastByte)]).into_iter()
-            .map(|range| async move { (range, self.read_part_file(file_path_ref, range).await.unwrap()) })
-        ).await;
+        let res = futures::future::try_join_all(ranges_o.unwrap_or(&[(0, EndOfFileRange::LastByte)]).into_iter()
+            .map(|range| async move { self.read_part_file(file_path_ref, range).await.map(|stream| (range, stream)) })
+        ).await?;
 
         Ok(res)
         // streams.push(((*range.0.get_start(), *range.0.get_end()), FileStream::TokioFile(reader)));
@@ -399,4 +403,3 @@ fn check_ranges(ranges: &[FileRange]) -> bool {
 
     true
 }
-

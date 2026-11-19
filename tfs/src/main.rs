@@ -4,6 +4,9 @@ mod controllers;
 mod services;
 mod common;
 mod config;
+mod logging;
+#[cfg(test)]
+mod test_support;
 
 // use libtorrent_sys::ffi::*;
 
@@ -18,6 +21,7 @@ use std::fs::File;
 use std::marker::PhantomData;
 use std::net::{IpAddr, SocketAddr};
 use std::ops::{Deref, DerefMut};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -33,21 +37,25 @@ use actix_web::rt::signal;
 use actix_web::web::Data;
 use async_trait::async_trait;
 use itertools::Itertools;
-use log::LevelFilter;
+use mainline::server::MutableItemValidator;
+use mainline::{DtlsConfig, RevocationStore};
 use openssl::pkey::{PKey, Private};
 use openssl::ssl::{SslAcceptor, SslMethod};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 use crate::config::global_config::GlobalConfig;
+use crate::controllers::auth::CaAccessTokenVerifier;
 use crate::heartbeat::heartbeat::Heartbeat;
 use crate::services::dht_map::dht_map::DHTMap;
 use crate::services::dht_map::model::DhtNodeId;
+use crate::services::secured_dht::SecuredDht;
+use crate::services::dtls_revocation_registry::{load_initial_artifact, DtlsRevocationRegistry, RevocationVerifier};
 use crate::services::file_storage::local_storage::local_storage::LocalStorage;
 use crate::services::internal_communication::InternalCommunication;
 use crate::services::permission_service::permission_service::PermissionService;
 use crate::services::shared_fs::shared_fs::SharedFS;
 use crate::services::user_permission_service::user_permission_service::UserPermissionService;
-use crate::services::user_service::user_service::UserService;
+use crate::services::user_service::user_service::{RoleAuthorizer, UserService};
 use crate::services::virtual_fs::virtual_fs::VirtualFS;
 
 #[tokio::main(flavor = "multi_thread")]
@@ -65,11 +73,16 @@ async fn main() -> Result<(), AppError> {
         }
     }
 
+    let mut logger_builder = logging::builder();
+    // Apply RUST_LOG last so it overrides defaults. tracing's log feature bridges mainline events.
+    logger_builder.parse_env(env_logger::Env::default());
+    logger_builder.init();
+
     let args: Vec<String> = env::args().collect();
     let self_ip: &str = args.get(1).map_or("127.0.0.1:8080", |v| v);
 
     println!("{:?}", args);
-    let other_ips = args.iter().skip(2).collect::<Vec<&String>>();
+    let other_ips = args.iter().skip(2).cloned().collect::<Vec<String>>();
     // let other_ips = other_ports.into_iter().map(|v| format!("{}:{}", "127.0.0.1", v)).collect::<Vec<String>>();
 
     println!("used ip: {}", self_ip);
@@ -82,9 +95,48 @@ async fn main() -> Result<(), AppError> {
         .collect::<Vec<u8>>();
     let ip_arr = [*ip.get(0).unwrap(), *ip.get(1).unwrap(), *ip.get(2).unwrap(), *ip.get(3).unwrap()];
 
-    let dht = DHTMap::new(port, &other_ips.into_iter().map(|v| v.to_string()).collect::<Vec<String>>()).unwrap();
+    let revocation_store = RevocationStore::default();
+    let root_ca_path = config_path("DTLS_ROOT_CA_PATH", "tls/dtls-root-ca.pem");
+    let root_ca_pem = std::fs::read(&root_ca_path)
+        .map_err(|error| format!("failed to read DTLS_ROOT_CA_PATH file {root_ca_path}: {error}"))?;
+    let ca_access_verifier = web::Data::new(
+        CaAccessTokenVerifier::from_root_pem(&root_ca_pem)
+            .map_err(|error| format!("failed to load HTTP access token CA {root_ca_path}: {error}"))?,
+    );
+    let dtls_config = load_dtls_config(revocation_store.clone(), &root_ca_pem)
+        .map_err(|error| format!("failed to load DTLS identity with root CA {root_ca_path}: {error:?}"))?;
+    let revocation_verifier = Arc::new(
+        RevocationVerifier::new(&root_ca_pem, dtls_config.issuer_spki_sha256(), revocation_store.clone())
+            .map_err(|error| format!("failed to load DTLS_ROOT_CA_PATH file {root_ca_path}: {error}"))?,
+    );
+    let revocation_state_path = PathBuf::from(config_path("DTLS_REVOCATION_STATE_PATH", "root/security/dtls-revocations.snapshot"));
+    let initial_revocations = load_initial_artifact(
+        &revocation_verifier,
+        &revocation_state_path,
+        &PathBuf::from(config_path("DTLS_REVOCATION_BOOTSTRAP_JSON_PATH", "tls/dtls-revocations.json")),
+        &PathBuf::from(config_path("DTLS_REVOCATION_BOOTSTRAP_SIGNATURE_PATH", "tls/dtls-revocations.sig")),
+    )
+    .map_err(|error| error.to_string())?;
+    if !revocation_store.replace(initial_revocations.snapshot().clone()) {
+        return Err("initial DTLS revocation sequence must be positive".to_string().into());
+    }
 
-    let dht = Arc::new(dht);
+    let mutable_validator: Arc<dyn MutableItemValidator> = revocation_verifier.clone();
+    let (secured_dht, revocation_admin) = SecuredDht::new(port, &other_ips, dtls_config, mutable_validator)
+        .map_err(|error| error.to_string())?;
+    let dht = Arc::new(DHTMap::new(secured_dht.clone()));
+    let revocation_registry = Arc::new(DtlsRevocationRegistry::new(
+        revocation_verifier,
+        Arc::new(revocation_admin),
+        revocation_state_path,
+        initial_revocations,
+    ));
+    revocation_registry
+        .activate()
+        .await
+        .map_err(|error| format!("failed to activate DHT serving: {error}"))?;
+    let cancellation_token = tokio_util::sync::CancellationToken::new();
+    tokio::spawn(revocation_registry.clone().run_polling(cancellation_token.clone(), revocation_poll_interval()));
 
 
     let dht_node_id = DhtNodeId::builder()
@@ -117,6 +169,7 @@ async fn main() -> Result<(), AppError> {
             .permission_service(permission_service.clone())
             .build()
     );
+    let role_authorizer: Arc<dyn RoleAuthorizer> = user_service.clone();
 
     let user_permission_service = Arc::new(
         UserPermissionService::builder()
@@ -132,9 +185,6 @@ async fn main() -> Result<(), AppError> {
             .config(config.clone())
             .build()
     );
-
-    let cancellation_token = tokio_util::sync::CancellationToken::new();
-
 
     let cloned_fs = virtual_fs.clone();
     let cloned_config = config.clone();
@@ -169,34 +219,33 @@ async fn main() -> Result<(), AppError> {
         }
     });
 
-    let mut logger_builder = env_logger::builder();
-    logger_builder.filter_module("mainline", LevelFilter::Error);
-    logger_builder.filter_level(LevelFilter::Info);
-    logger_builder.init();
-    // env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
-
     let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
     builder
         .set_private_key(&load_encrypted_private_key())
         .unwrap();
     builder
-        .set_certificate_chain_file(&tls_path("TLS_TFS_CRT_PATH", "tls/tfs.crt"))
+        .set_certificate_chain_file(&config_path("TLS_TFS_CRT_PATH", "tls/tfs.crt"))
         .unwrap();
 
     HttpServer::new(move || {
         App::new()
             .app_data(Data::new(dht.clone()))
+            .app_data(Data::new(secured_dht.clone()))
             .app_data(Data::new(config.clone()))
             // .app_data(Data::new(virtual_fs.clone()))
             .app_data(Data::new(permission_service.clone()))
             .app_data(Data::new(shared_fs.clone()))
             .app_data(Data::new(user_service.clone()))
+            .app_data(Data::new(role_authorizer.clone()))
+            .app_data(ca_access_verifier.clone())
             .app_data(Data::new(user_permission_service.clone()))
+            .app_data(Data::new(revocation_registry.clone()))
             // .app_data(web::PayloadConfig::new(1 * 1024 * 1024 * 1024))
             .service(controllers::virtual_fs_controller::virtual_fs_controller::config())
             .service(controllers::permission_controller::permission_controller::config())
             .service(controllers::dht_controller::dht_controller::config())
             .service(controllers::user_controller::user_controller::config())
+            .service(controllers::dtls_revocation_controller::config())
             .service(Files::new("/fs", "fs/")
                 .prefer_utf8(true)
                 .default_handler(|req: ServiceRequest| async {
@@ -209,7 +258,6 @@ async fn main() -> Result<(), AppError> {
             .wrap(Logger::default())
             .wrap(Cors::permissive())
     })
-        .bind(("0.0.0.0", port + 1))?
         .bind_openssl(("0.0.0.0", port), builder)?
         .run()
         .await?;
@@ -221,15 +269,44 @@ async fn main() -> Result<(), AppError> {
     // client().await;
 }
 
-fn tls_path(env_var: &str, default: &str) -> String {
+fn config_path(env_var: &str, default: &str) -> String {
     env::var(env_var).unwrap_or_else(|_| {
         log::warn!("{} not set, using default: {}", env_var, default);
         default.to_string()
     })
 }
 
+fn read_config_file(env_var: &str, default: &str) -> Result<Vec<u8>, AppError> {
+    let path = config_path(env_var, default);
+    let mut file = File::open(&path)
+        .map_err(|error| format!("failed to open {env_var} file {path}: {error}"))?;
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)
+        .map_err(|error| format!("failed to read {env_var} file {path}: {error}"))?;
+    Ok(buffer)
+}
+
+fn load_dtls_config(revocations: RevocationStore, root_ca_pem: &[u8]) -> Result<DtlsConfig, AppError> {
+    DtlsConfig::from_pem(
+        &read_config_file("DTLS_NODE_CERT_PATH", "tls/dtls-node.crt")?,
+        &read_config_file("DTLS_NODE_KEY_PATH", "tls/dtls-node.key")?,
+        root_ca_pem,
+        revocations,
+    )
+    .map_err(|error| error.to_string().into())
+}
+
+fn revocation_poll_interval() -> Duration {
+    env::var("DTLS_REVOCATION_POLL_INTERVAL_SECS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|seconds| *seconds > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(30))
+}
+
 fn load_ca_cert() -> Vec<u8> {
-    let path = tls_path("TLS_ROOT_CA_PATH", "tls/rootCA.pem");
+    let path = config_path("TLS_ROOT_CA_PATH", "tls/rootCA.pem");
     let mut file = File::open(&path).unwrap();
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer).expect("Failed to read file");
@@ -239,7 +316,7 @@ fn load_ca_cert() -> Vec<u8> {
 
 
 fn load_encrypted_private_key() -> PKey<Private> {
-    let path = tls_path("TLS_TFS_KEY_PATH", "tls/tfs.key");
+    let path = config_path("TLS_TFS_KEY_PATH", "tls/tfs.key");
     let mut file = File::open(&path).unwrap();
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer).expect("Failed to read file");
@@ -277,9 +354,12 @@ impl From<io::Error> for AppError {
     //     .await
 // }
 
-async fn server() {
+async fn server(dtls: DtlsConfig, validator: Arc<dyn MutableItemValidator>) {
     // let map = DistributedMap::new(8082, &vec!["127.0.0.1:8081".to_string(), "127.0.0.1:8080".to_string()]).unwrap();
-    let map = DHTMap::new(8080, &vec!["127.0.0.1:8081".to_string(), "127.0.0.1:8082".to_string()]).unwrap();
+    let (secured_dht, _revocation_admin) = SecuredDht::new(
+        8080, &vec!["127.0.0.1:8081".to_string(), "127.0.0.1:8082".to_string()], dtls, validator,
+    ).unwrap();
+    let _map = DHTMap::new(secured_dht);
 
     sleep(Duration::from_secs(10 * 60));
 

@@ -12,7 +12,7 @@ use crate::services::dht_map::dht_map::DHTMap;
 
 pub struct GlobalConfig {
     dht: Arc<DHTMap>,
-    cache: Cache<ConfigKey, String>,
+    cache: Cache<&'static str, String>,
     initial_overrides: DashMap<ConfigKey, String>,
     root_certificate: Vec<u8>
 }
@@ -39,7 +39,6 @@ pub enum ConfigKey {
     CacheTTLInSeconds,
     CacheCapacity,
     SelfUid,
-    SecretSigningKey,
     AnonymousUid
 }
 
@@ -66,7 +65,6 @@ impl ConfigKey {
             ConfigKey::RebacFolderId => false,
             ConfigKey::UsersFolderId => false,
             ConfigKey::SelfUid => true,
-            ConfigKey::SecretSigningKey => true,
             ConfigKey::AnonymousUid => true,
             ConfigKey::UiPath => false
         }
@@ -96,7 +94,6 @@ impl ConfigKey {
             ConfigKey::RebacFolderId => "4".to_string(),
             ConfigKey::UsersFolderId => "5".to_string(),
             ConfigKey::SelfUid => "1".to_string(),
-            ConfigKey::SecretSigningKey => "some-secret".to_string(),
             ConfigKey::AnonymousUid => "2".to_string(),
             ConfigKey::UiPath => "fs".to_string()
         }
@@ -104,7 +101,7 @@ impl ConfigKey {
 }
 
 impl ConfigKey{
-    fn get_path(&self) -> &str {
+    fn get_path(&self) -> &'static str {
         match self {
             ConfigKey::LocationOfKeepersIps => "keepers",
             ConfigKey::ReplicationFactor => "replicationFactor",
@@ -125,7 +122,6 @@ impl ConfigKey{
             ConfigKey::RebacFolderId => "rebac_folder_id",
             ConfigKey::UsersFolderId => "users_folder_id",
             ConfigKey::SelfUid => "self_uid",
-            ConfigKey::SecretSigningKey => "secret_signing_secret",
             ConfigKey::AnonymousUid => "anonymous_uid",
             ConfigKey::UiPath => "ui_path"
         }
@@ -134,6 +130,12 @@ impl ConfigKey{
 
 
 static CONFIG_PREFIX: &str = "/config/";
+pub(crate) const SIGNING_KEY_PATH: &str = "/config/secret_signing_secret";
+
+#[derive(Debug, thiserror::Error)]
+#[error("authentication unavailable")]
+pub(crate) struct SigningKeyUnavailable;
+
 impl GlobalConfig {
     pub async fn new(dht: Arc<DHTMap>, root_certificate: Vec<u8>) -> Self {
         let mut global_config = GlobalConfig {
@@ -177,12 +179,25 @@ impl GlobalConfig {
             }
         }
 
-        if let Some(v) = self.cache.get(&key).await {
+        if let Some(v) = self.cache.get(key.get_path()).await {
             return v;
         }
         let val = self.get_fresh_val(key).await;
-        self.cache.insert(key, val.clone()).await;
+        self.cache.insert(key.get_path(), val.clone()).await;
         val
+    }
+
+    pub(crate) async fn signing_key(&self) -> Result<String, SigningKeyUnavailable> {
+        if let Some(secret) = self.cache.get(SIGNING_KEY_PATH).await {
+            return Ok(secret);
+        }
+        match self.dht.get::<String>(SIGNING_KEY_PATH).await {
+            Ok(Some((secret, _))) if !secret.trim().is_empty() => {
+                self.cache.insert(SIGNING_KEY_PATH, secret.clone()).await;
+                Ok(secret)
+            }
+            Ok(_) | Err(_) => Err(SigningKeyUnavailable),
+        }
     }
 
     async fn get_fresh_or_default<T: FromStr>(&self, key: ConfigKey) -> T {
