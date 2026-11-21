@@ -9,7 +9,6 @@ use awc::Client;
 use bytes::Bytes;
 use futures::Stream;
 use reqwest::header::{AUTHORIZATION, RANGE};
-use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use tryhard::retry_fn;
 use typed_builder::TypedBuilder;
@@ -67,7 +66,7 @@ impl InternalCommunication {
         // let response = self.client.put(format!("http://{}:{}/virtual_fs/file/{}", node.ip, node.port, filename))
         let response = self.client.post(format!("https://{}:{}/virtual_fs/file/{}", node.ip, node.port, filename.trim_start_matches("/")))
             .header(RANGE, range.to_string())
-            .header(AUTHORIZATION, format!("Bearer {}", self.internal_token().await))
+            .header(AUTHORIZATION, format!("Bearer {}", self.internal_token().await?))
             .body(reqwest::Body::wrap_stream(stream))
             .query(&SaveExistingRequest { version, fs_node_type })
             .send()
@@ -82,9 +81,10 @@ impl InternalCommunication {
     }
 
     pub async fn get_stored_versions_of_file(&self, filename: &str, node: DhtNodeId) -> Result<Vec<StoredFile>, String> { // видимо нужный какой то общий FileRange
+        let token = self.internal_token().await?;
         let response = retry_fn(async || {
             self.client.get(format!("https://{}:{}/virtual_fs/stored_parts/{}", node.ip, node.port, filename))
-                .header(AUTHORIZATION, format!("Bearer {}", self.internal_token().await))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
                 .send()
                 .await
         }).retries(3)
@@ -103,9 +103,10 @@ impl InternalCommunication {
     }
 
     pub async fn get_file_content(&self, filename: &str, node: DhtNodeId) -> Result<impl Stream<Item=Result<Bytes, reqwest::Error>>, String> {
+        let token = self.internal_token().await?;
         let response = retry_fn(|| async {
             self.client.get(format!("https://{}:{}/virtual_fs/file/{}", node.ip, node.port, filename))
-                .header(AUTHORIZATION, format!("Bearer {}", self.internal_token().await))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
                 .send()
                 .await
         }).retries(3)
@@ -120,14 +121,14 @@ impl InternalCommunication {
         }
     }
 
-    async fn internal_token(&self) -> String {
+    async fn internal_token(&self) -> Result<String, String> {
+        let secret = self.config.signing_key().await.map_err(|error| error.to_string())?;
 
         let now = SystemTime::now();
         let expires = now.add(Duration::from_secs(60 * 5))
             .duration_since(UNIX_EPOCH).unwrap().as_secs();
 
         let self_uid = self.config.get_val(ConfigKey::SelfUid).await;
-        let secret = self.config.get_val(ConfigKey::SecretSigningKey).await;
-        generate_token(u64::from_str(&self_uid).unwrap(), expires, TokenAction::Access, secret.as_bytes())
+        Ok(generate_token(u64::from_str(&self_uid).default_res()?, expires, TokenAction::Access, secret.as_bytes()))
     }
 }

@@ -1,54 +1,31 @@
-use std::any::Any;
-use std::io::Write;
 use std::time::Duration;
-use async_trait::async_trait;
-use flume::{Receiver, Sender};
-use mainline::{Bytes, Dht, Id, MutableItem, SigningKey};
-use mainline::async_dht::AsyncDht;
-use tokio::io::AsyncReadExt;
-use typed_builder::TypedBuilder;
-use futures::{FutureExt, Stream, StreamExt};
+use mainline::MutableItem;
 use log::error;
-use sha2::{Digest, Sha256};
-use sha2::digest::{DynDigest, Update};
 use tryhard::retry_fn;
 use crate::common::default_error::DefaultError;
 use crate::common::retry_police::fixed_backoff_with_jitter::FixedBackoffWithJitter;
 use crate::services::dht_map::codec as proto_codec;
-use crate::services::dht_map::codec::{DhtMapValue, DhtRecord, DhtValue, DistributedMapVal, MAX_DHT_VALUE_SIZE};
-use crate::services::dht_map::error::{CreateError, DhtCodecError, DhtGetError, KeyError, DhtPutError};
+use crate::services::dht_map::codec::{DhtMapValue, DhtRecord, DhtValue, DistributedMapVal};
+use crate::services::dht_map::error::{DhtCodecError, DhtGetError, DhtPutError};
 use crate::services::dht_map::model::PrevSeq;
+use crate::services::secured_dht::SecuredDht;
+
+mod strict;
+pub(crate) use strict::StrictDhtError;
 
 pub struct DHTMap {
-    dht: AsyncDht,
+    dht: SecuredDht,
 }
 
 impl DHTMap {
-    pub fn new(port: u16, other: &[String]) -> Result<DHTMap, CreateError> {
-        let dht = Dht::builder()
-            .server()
-            .bootstrap(other)
-            .port(port)
-            .build()?;
-        let map = DHTMap {
-            dht: dht.as_async()
-        };
-
-        return Ok(map);
+    pub(crate) fn new(dht: SecuredDht) -> Self {
+        Self { dht }
     }
 
     async fn put_into_dht(&self, key: &str, record: &DhtRecord, seq: i64, cas: Option<i64>) -> Result<(), DhtPutError> {
-        let signing_key = generate_key(key)?;
-
+        self.dht.check_security()?;
         let encoded = proto_codec::encode_record(record)?;
-        validate_dht_value_size(encoded.len())?;
-        let mut item = MutableItem::new(signing_key, Bytes::from(encoded), seq, None);
-        if let Some(v) = cas {
-            item = item.with_cas(v);
-        }
-
-        self.dht.put_mutable(item).await.default_res()?;
-        Ok(())
+        self.dht.put_raw_mutable(key, encoded, seq, cas).await
     }
 
     async fn put_impl<T: DhtMapValue>(&self, key: &str, value: &T, prev_seq: PrevSeq) -> Result<(), DhtPutError> {
@@ -83,19 +60,8 @@ impl DHTMap {
         Ok(())
     }
 
-    async fn get_non_filtered_mainline_dht_items(&self, key: &str) -> Result<Vec<MutableItem>, DhtGetError> {
-        let signing_key = generate_key(key)?;
-
-        let mut item_stream = self.dht.get_mutable(signing_key.verifying_key().as_bytes(), None, None)?;
-
-        let mut versions: Vec<MutableItem> = Vec::new();
-        while let Some(record) = item_stream.next().await {
-            versions.push(record);
-        }
-        Ok(versions)
-    }
     async fn get_mainline_dht_item(&self, key: &str) -> Result<Option<MutableItem>, DhtGetError> {
-        let mut non_filtered = self.get_non_filtered_mainline_dht_items(key).await?;
+        let mut non_filtered = self.dht.get_raw_mutable(key).await?;
 
         let mut fallback = 0;
         loop {
@@ -130,17 +96,17 @@ impl DHTMap {
     }
 
     pub(crate) async fn put<T: DhtMapValue>(&self, key: &str, value: &T) -> Result<(), DhtPutError> {
-        retry_fn(|| self.put_impl(key, value, PrevSeq::Any))
+        self.dht.application_operation(retry_fn(|| self.put_impl(key, value, PrevSeq::Any))
             .retries(3)
             .custom_backoff(FixedBackoffWithJitter::new(Duration::from_secs(2), 50))
-            .await
+        ).await?
     }
 
     pub(crate) async fn put_with_seq<T: DhtMapValue>(&self, key: &str, value: &T, prev_seq: PrevSeq) -> Result<(), DhtPutError> {
-        retry_fn(|| self.put_impl(key, value, prev_seq))
+        self.dht.application_operation(retry_fn(|| self.put_impl(key, value, prev_seq))
             .retries(3)
             .custom_backoff(FixedBackoffWithJitter::new(Duration::from_secs(2), 50))
-            .await
+        ).await?
     }
 
     pub(crate) async fn get<T: DhtMapValue>(&self, key: &str) -> Result<Option<(T, i64)>, DhtGetError> {
@@ -196,30 +162,11 @@ fn filter_mainline_items(items: &[MutableItem]) -> Vec<MutableItem> {
         .collect()
 }
 
-fn generate_key(key: &str) -> Result<SigningKey, KeyError> {
-    let mut hasher = Sha256::new();
-    hasher.write(key.as_bytes())?;
-
-    let private_key = hasher.finalize();
-
-    Ok(SigningKey::try_from(private_key.as_slice())?)
-}
-
 fn next_seq(seq: Option<i64>) -> Result<i64, DhtPutError> {
     match seq {
         Some(seq) => seq.checked_add(1).ok_or(DhtPutError::SequenceOverflow(seq)),
         None => Ok(0),
     }
-}
-
-fn validate_dht_value_size(size: usize) -> Result<(), DhtPutError> {
-    if size > MAX_DHT_VALUE_SIZE {
-        return Err(DhtPutError::ValueTooLarge {
-            size,
-            max: MAX_DHT_VALUE_SIZE,
-        });
-    }
-    Ok(())
 }
 
 fn upsert_value(record: &mut DhtRecord, key: &str, value: DhtValue) -> Result<(), DhtCodecError> {
@@ -249,15 +196,6 @@ fn upsert_value(record: &mut DhtRecord, key: &str, value: DhtValue) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn validates_dht_value_size_boundary() {
-        assert!(validate_dht_value_size(MAX_DHT_VALUE_SIZE).is_ok());
-        assert!(matches!(
-            validate_dht_value_size(MAX_DHT_VALUE_SIZE + 1),
-            Err(DhtPutError::ValueTooLarge { .. })
-        ));
-    }
 
     #[test]
     fn rejects_sequence_overflow() {

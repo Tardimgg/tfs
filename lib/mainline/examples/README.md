@@ -1,5 +1,7 @@
 # Examples
 
+All examples require `DTLS_NODE_CERT_PATH`, `DTLS_NODE_KEY_PATH`, and `DTLS_ROOT_CA_PATH`.
+
 ## Announce peer
 
 ```sh
@@ -15,7 +17,7 @@ cargo run --example get_peers <40 bytes hex info_hash>
 ## Put Immutable
 
 ```sh
-cargo run --example put_immutable <string>
+cargo run --features async --example put_immutable <string>
 ```
 
 ## Get Immutable

@@ -459,19 +459,20 @@ impl Message {
                                                 target: Id::from_bytes(arguments.target)?,
                                                 v: arguments.v,
                                                 k,
-                                                // Should panic if missing.
-                                                seq: arguments.seq.expect(
-                                                    "Put mutable message to have sequence number",
-                                                ),
-                                                sig: arguments.sig.expect(
-                                                    "Put mutable message to have a signature",
-                                                ),
+                                                seq: arguments.seq.ok_or(Error::MissingMutableSequence)?,
+                                                sig: arguments.sig.ok_or(Error::MissingMutableSignature)?,
                                                 salt: arguments.salt,
                                                 cas: arguments.cas,
                                             },
                                         ),
                                     }),
                                 }
+                            } else if arguments.seq.is_some()
+                                || arguments.sig.is_some()
+                                || arguments.salt.is_some()
+                                || arguments.cas.is_some()
+                            {
+                                return Err(Error::UnexpectedMutableFieldsInImmutablePut);
                             } else {
                                 RequestSpecific {
                                     requester_id: Id::from_bytes(arguments.id)?,
@@ -1117,5 +1118,67 @@ mod tests {
         let parsed_serde_msg = internal::DHTMessage::from_bytes(bytes).unwrap();
         let parsed_msg = Message::from_serde_message(parsed_serde_msg).unwrap();
         assert_eq!(parsed_msg, original_msg);
+    }
+
+    #[test]
+    fn test_put_rejects_invalid_mutable_fields() {
+        use std::mem::discriminant;
+
+        let key = Some(vec![0; 32]);
+        let signature = Some(vec![0; 64]);
+        let unexpected = &Error::UnexpectedMutableFieldsInImmutablePut;
+        let cases = [
+            (
+                "missing sequence",
+                put_value_message(key.clone(), None, signature.clone(), None, None),
+                &Error::MissingMutableSequence,
+            ),
+            (
+                "missing signature",
+                put_value_message(key, Some(0), None, None, None),
+                &Error::MissingMutableSignature,
+            ),
+            ("seq without key", put_value_message(None, Some(0), None, None, None), unexpected),
+            ("sig without key", put_value_message(None, None, signature, None, None), unexpected),
+            ("salt without key", put_value_message(None, None, None, Some(vec![0]), None), unexpected),
+            ("cas without key", put_value_message(None, None, None, None, Some(0)), unexpected),
+        ];
+
+        for (case, message, expected) in cases {
+            let Err(error) = Message::from_bytes(message.to_bytes().unwrap()) else {
+                panic!("{}: malformed PUT was accepted", case);
+            };
+            assert_eq!(discriminant(&error), discriminant(expected), "{case}: wrong error variant");
+        }
+    }
+
+    fn put_value_message(
+        k: Option<Vec<u8>>,
+        seq: Option<i64>,
+        sig: Option<Vec<u8>>,
+        salt: Option<Vec<u8>>,
+        cas: Option<i64>,
+    ) -> internal::DHTMessage {
+        internal::DHTMessage {
+            ip: None,
+            read_only: None,
+            transaction_id: vec![1, 2],
+            version: None,
+            variant: internal::DHTMessageVariant::Request(
+                internal::DHTRequestSpecific::PutValue {
+                    arguments: internal::DHTPutValueRequestArguments {
+                        id: Id::random().to_vec(),
+                        target: Id::random().to_vec(),
+                        token: vec![0],
+                        v: vec![0],
+                        k,
+                        sig,
+                        seq,
+                        cas,
+                        salt,
+                    },
+                },
+            ),
+        }
     }
 }
